@@ -6,18 +6,84 @@ BatteryInterface::BatteryInterface() {
 void BatteryInterface::main(uint32_t currentTime) {
   if (currentTime != 0) {
     if (currentTime - initTime >= 3000) {
-      //Serial.println("Checking Battery Level");
       this->initTime = millis();
+
+      // Battery level
       int8_t new_level = this->getBatteryLevel();
-      //this->battery_level = this->getBatteryLevel();
       if (this->battery_level != new_level) {
         Logger::log(STD_MSG, "Battery Level changed: " + (String)new_level);
         this->battery_level = new_level;
         Logger::log(STD_MSG, "Battery Level: " + (String)this->battery_level);
       }
+
+      // Chunk 2: USB charging state debounce
+      this->updateChargingState();
     }
   }
 }
+
+// ============================================================
+// Chunk 2: USB / charging detection
+// ============================================================
+
+// Single raw read — no debounce, no caching.
+// IP5306: register 0x70 bit 3 = USB present/charging.
+// MAX17048: positive chargeRate = charging.
+// Returns true if USB power is detected.
+bool BatteryInterface::readRawCharging() {
+  if (this->has_ip5306) {
+    Wire.beginTransmission(IP5306_ADDR);
+    Wire.write(IP5306_REG_STATUS);
+    if (Wire.endTransmission(false) == 0 && Wire.requestFrom(IP5306_ADDR, 1)) {
+      uint8_t val = Wire.read();
+      return (val & IP5306_CHARGE_BIT) != 0;
+    }
+    // I2C read failed — assume no change, return current state
+    return this->charging_state;
+  }
+
+  if (this->has_max17048) {
+    // chargeRate() > 0 means cell is gaining charge = USB present
+    return this->maxlipo.chargeRate() > 0.0f;
+  }
+
+  return false; // no supported IC
+}
+
+// Debounce: require USB_DEBOUNCE_READS (3) consecutive identical reads
+// before committing a state transition. This filters I2C glitches.
+void BatteryInterface::updateChargingState() {
+  bool raw = this->readRawCharging();
+
+  if (raw == this->pending_charging_state) {
+    this->usb_debounce_count++;
+  } else {
+    // Reading changed — reset counter and track new candidate
+    this->pending_charging_state = raw;
+    this->usb_debounce_count = 1;
+  }
+
+  if (this->usb_debounce_count >= USB_DEBOUNCE_READS) {
+    if (raw != this->charging_state) {
+      // State transition confirmed
+      this->charging_state = raw;
+      if (raw) {
+        Logger::log(GUD_MSG, "[BAT] USB power connected — charging");
+      } else {
+        Logger::log(WARN_MSG, "[BAT] USB power removed — on battery");
+      }
+    }
+    // Reset debounce so we keep checking cleanly
+    this->usb_debounce_count = 0;
+  }
+}
+
+// Public accessor — returns the debounced charging state.
+bool BatteryInterface::isCharging() {
+  return this->charging_state;
+}
+
+// ============================================================
 
 void BatteryInterface::RunSetup() {
   byte error;
@@ -84,6 +150,15 @@ void BatteryInterface::RunSetup() {
     }*/
     
     this->initTime = millis();
+
+    // Chunk 2: take an initial charging reading so state is valid before
+    // the first main() cycle. No debounce on first read — just seed the state.
+    bool initial = this->readRawCharging();
+    this->charging_state         = initial;
+    this->pending_charging_state = initial;
+    this->usb_debounce_count     = 0;
+    Logger::log(STD_MSG, "[BAT] Initial USB state: " + String(initial ? "CHARGING" : "BATTERY"));
+
   #endif
 }
 
