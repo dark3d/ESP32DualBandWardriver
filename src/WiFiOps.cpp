@@ -1,4 +1,7 @@
 #include "WiFiOps.h"
+#include "BatteryInterface.h"
+
+extern BatteryInterface battery;
 
 static const uint8_t BROADCAST_MAC[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 static const char MAGIC[4] = {'E','N','O','W'};
@@ -2639,7 +2642,7 @@ void WiFiOps::serveConfigPage() {
     logHtml += "</style></head><body>";
     logHtml += "<b>C5 Wardriver — Live Log</b> ";
     logHtml += "<a href='/'>&#8592; Back</a><br>";
-    logHtml += "<small>Auto-refreshes every 2s. Showing last " +
+    logHtml += "<small>Auto-refreshes every 5s. Showing last " +
     String(Logger::ring_count) + "/" +
     String(LOG_RING_SIZE) + " lines.</small><hr>";
 
@@ -2762,6 +2765,7 @@ bool WiFiOps::begin(bool skip_admin) {
 
       while (this->serving) {
         server.handleClient();
+        battery.main(millis());
 
         // Stay connected until K1T actually disappears — no inactivity
         // timeout when connected as a client to a known WLAN.
@@ -3012,6 +3016,8 @@ void WiFiOps::handleDockUploading() {
 void WiFiOps::handleDockMonitoring(uint32_t currentTime) {
   // Service any web browser clients
   server.handleClient();
+  // Keep battery main running so chargeRate sampling fires
+  battery.main(currentTime);
 
   // Tier 1 → Tier 2 upgrade: GPS fix acquired while in web-UI-only mode
   if (this->dock_webui_only && gps.getFixStatus() && sd_obj.supported) {
