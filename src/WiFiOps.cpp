@@ -2330,7 +2330,7 @@ void WiFiOps::serveConfigPage() {
 
       html += "<strong>Zone " + String(i + 1) + "</strong><br>";
       html += "&nbsp;&nbsp;Label: <input type=\"text\" name=\"geo_" + String(i) + "_label\" value=\"" + gLabel + "\"> ";
-      html += "Radius (m): <input type=\"number\" name=\"geo_" + String(i) + "_rad\" value=\"" + String(gRad) + "\" min=\"0\" style=\"width:70px\"><br>";
+      html += "Radius (m, min 161 = 0.1mi, max 1609 = 1mi): <input type=\"number\" name=\"geo_" + String(i) + "_rad\" value=\"" + String(gRad) + "\" min=\"161\" max=\"1609\" style=\"width:70px\"><br>";
       html += "&nbsp;&nbsp;Lat: <input type=\"text\" name=\"geo_" + String(i) + "_lat\" value=\"" + String(gLat, 6) + "\" style=\"width:110px\"> ";
       html += "Lon: <input type=\"text\" name=\"geo_" + String(i) + "_lon\" value=\"" + String(gLon, 6) + "\" style=\"width:110px\"><br><br>";
     }
@@ -2486,6 +2486,8 @@ void WiFiOps::serveConfigPage() {
         float  lat   = server.arg(latKey).toFloat();
         float  lon   = server.arg(lonKey).toFloat();
         int    rad   = server.arg(radKey).toInt();
+        if (rad > 0 && rad < 161)  rad = 161;   // floor at 0.1 mi
+        if (rad > 1609)            rad = 1609;  // cap at 1 mi
         String label = server.arg(labelKey);
 
         DynamicJsonDocument geoDoc(256);
