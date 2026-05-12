@@ -63,7 +63,6 @@ void UI::begin() {
   });
   this->addNodes(&mode_menu, "Solo", ST77XX_WHITE, NULL, 0, [this]() {
     wifi_ops.run_mode = SOLO_MODE;
-    //settings.saveSetting<bool>("m", wifi_ops.run_mode);
     this->current_menu = mode_menu.parentMenu;
     display.clearScreen();
     display.drawCenteredText("Mode set", true);
@@ -71,7 +70,6 @@ void UI::begin() {
   });
   this->addNodes(&mode_menu, "Core", ST77XX_WHITE, NULL, 0, [this]() {
     wifi_ops.run_mode = CORE_MODE;
-    //settings.saveSetting<bool>("m", wifi_ops.run_mode);
     this->current_menu = mode_menu.parentMenu;
     display.clearScreen();
     display.drawCenteredText("Mode set", true);
@@ -80,7 +78,6 @@ void UI::begin() {
   });
   this->addNodes(&mode_menu, "Node", ST77XX_WHITE, NULL, 0, [this]() {
     wifi_ops.run_mode = NODE_MODE;
-    //settings.saveSetting<bool>("m", wifi_ops.run_mode);
     this->current_menu = mode_menu.parentMenu;
     display.clearScreen();
     display.drawCenteredText("Mode set", true);
@@ -115,7 +112,7 @@ void UI::printBatteryLevel(int8_t batteryLevel) {
     uint8_t charWidth = 6;
     uint16_t textWidth = (strlen(buf) + 5) * charWidth;
     uint16_t x = TFT_WIDTH - textWidth - 2;  // Right-aligned with 2px padding
-    uint16_t y = 0;  // Adjust based on layout
+    uint16_t y = 0;
 
     display.tft->setCursor(x, y);
     if (sd_obj.supported)
@@ -135,9 +132,12 @@ void UI::updateStats(uint32_t currentTime, uint32_t wifiCount, uint32_t count2g4
   lastUpdateTime = currentTime;
 
   display.tft->setRotation(3);  // Landscape mode
-  display.tft->fillRect(0, 0, 160, 80, ST77XX_BLACK);  // Clear top half
+  // No fillRect/clearScreen here — text is drawn with explicit background
+  // color (setTextColor fg, ST77XX_BLACK) so each character cell self-erases.
+  // Variable-width values are padded with trailing spaces to overwrite any
+  // stale digits left from a longer previous value.
 
-  display.tft->setTextColor(ST77XX_WHITE);
+  display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
   display.tft->setTextSize(1);
 
   this->printFirmwareVersion();
@@ -151,59 +151,53 @@ void UI::updateStats(uint32_t currentTime, uint32_t wifiCount, uint32_t count2g4
       display.tft->println();
 
     if (wifi_ops.getCurrentScanMode() == WIFI_STANDBY)
-      display.tft->println("Status: STANDBY");
+      display.tft->println("Status: STANDBY ");
     else if (wifi_ops.getCurrentScanMode() == WIFI_WARDRIVING)
-      display.tft->println("Status: SCANNING");
+      display.tft->println("Status: SCANNING ");
 
     if (sd_obj.supported)
-      display.tft->println("File: " + buffer.getFileName());
+      display.tft->println("File: " + buffer.getFileName() + "   ");
 
     display.tft->println();
-
 
     display.tft->print("2.4GHz: ");
-    display.tft->print(count2g4);
+    display.tft->print(String(count2g4) + "   ");
     display.tft->print(" | ");
     display.tft->print("5GHz: ");
-    display.tft->println(count5g);
+    display.tft->println(String(count5g) + "   ");
 
     display.tft->print("BLE: ");
-    display.tft->print(bleCount);
+    display.tft->print(String(bleCount) + "   ");
     display.tft->print(" | GPS Sats: ");
-    display.tft->println(gpsSats > 0 ? String(gpsSats) : "No Fix");
+    display.tft->println(gpsSats > 0 ? String(gpsSats) + " " : "No Fix");
 
     display.tft->println();
 
-    display.tft->setTextColor(ST77XX_GREEN);
+    display.tft->setTextColor(ST77XX_GREEN, ST77XX_BLACK);
     display.tft->print("Total Nets: ");
-    display.tft->setTextColor(ST77XX_WHITE);
-    display.tft->println(wifi_ops.getTotalNetCount());
-    display.tft->setTextColor(CYAN);
+    display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    display.tft->println(String(wifi_ops.getTotalNetCount()) + "   ");
+    display.tft->setTextColor(CYAN, ST77XX_BLACK);
     display.tft->print("Total BLE: ");
-    display.tft->setTextColor(ST77XX_WHITE);
-    display.tft->println(wifi_ops.getTotalBLECount());
-    display.tft->setTextColor(ST77XX_WHITE);
+    display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    display.tft->println(String(wifi_ops.getTotalBLECount()) + "   ");
   }
   else if (this->stat_display_mode == GLANCE_STATS) {
     for (int i = 0; i < 2; i++)
       display.tft->println();
 
     display.tft->print("GPS Sats: ");
-    display.tft->println(gpsSats > 0 ? String(gpsSats) : "No Fix");
+    display.tft->println(gpsSats > 0 ? String(gpsSats) + " " : "No Fix");
 
     display.tft->setTextSize(2);
 
     display.tft->println();
 
-    display.tft->setTextColor(ST77XX_GREEN);
-    //display.tft->print("Total Nets: ");
-    //display.tft->setTextColor(ST77XX_WHITE);
-    display.tft->println(wifi_ops.getTotalNetCount());
-    display.tft->setTextColor(CYAN);
-    //display.tft->print("Total BLE: ");
-    //display.tft->setTextColor(ST77XX_WHITE);
-    display.tft->println(wifi_ops.getTotalBLECount());
-    display.tft->setTextColor(ST77XX_WHITE);
+    display.tft->setTextColor(ST77XX_GREEN, ST77XX_BLACK);
+    display.tft->println(String(wifi_ops.getTotalNetCount()) + "      ");
+    display.tft->setTextColor(CYAN, ST77XX_BLACK);
+    display.tft->println(String(wifi_ops.getTotalBLECount()) + "      ");
+    display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
     
     display.tft->setTextSize(1);
   }
@@ -214,8 +208,6 @@ void UI::setupSDFileList() {
   delete sd_obj.sd_files;
 
   sd_obj.sd_files = new LinkedList<String>();
-
-  //sd_obj.sd_files->add("Back");
 
   sd_obj.listDirToLinkedList(sd_obj.sd_files, "/", ".log");
 }
@@ -291,7 +283,6 @@ void UI::drawCurrentMenu() {
     MenuNode node = current_menu->list->get(item_index);
     int y = header_height + i * 8;
 
-    // Handle selection color
     if (item_index == current_menu->selected) {
       display.tft->setTextColor(ST77XX_BLACK, ST77XX_WHITE);
       display.tft->setCursor(0, y);
@@ -310,7 +301,6 @@ void UI::drawCurrentMenu() {
       sizeStr += " KB";
     }
 
-    // Align file size to the right
     int textPixelWidth = sizeStr.length() * 6;
     int xRightAlign = TFT_WIDTH - textPixelWidth;
     display.tft->setCursor(xRightAlign, y);
@@ -335,7 +325,6 @@ void UI::handleMenuNavigation() {
 
   int list_size = current_menu->list->size();
 
-  // Up
   if (u_btn.justPressed()) {
     if (current_menu->selected == 0)
       current_menu->selected = list_size - 1;
@@ -345,19 +334,17 @@ void UI::handleMenuNavigation() {
     drawCurrentMenu();
   }
 
-  // Down
   if (d_btn.justPressed()) {
     current_menu->selected = (current_menu->selected + 1) % list_size;
     drawCurrentMenu();
   }
 
-  // Select
   if (c_btn.justPressed()) {
     MenuNode node = current_menu->list->get(current_menu->selected);
     if (node.callable)
       node.callable();
 
-    drawCurrentMenu();  // Refresh in case menu changed
+    drawCurrentMenu();
   }
 }
 
@@ -416,7 +403,6 @@ void UI::main(uint32_t currentTime) {
           true
         );
     }
-
 
     if (c_btn.justPressed())
       Logger::log(STD_MSG, "C_BTN Pressed: " + (String)millis());
