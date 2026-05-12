@@ -2716,11 +2716,10 @@ bool WiFiOps::begin(bool skip_admin) {
       while (this->serving) {
         server.handleClient();
 
-        this->showCountdown();
-
-        if (millis() - this->last_web_client_activity > WEB_PAGE_TIMEOUT) {
-          Logger::log(STD_MSG, "Web client activity timeout");
-          Logger::log(STD_MSG, "Shutting down server and resuming normal function...");
+        // Stay connected until K1T actually disappears — no inactivity
+        // timeout when connected as a client to a known WLAN.
+        if (WiFi.status() != WL_CONNECTED) {
+          Logger::log(WARN_MSG, "WiFi connection lost — resuming wardriving...");
           this->shutdownAccessPoint(false);
           break;
         }
