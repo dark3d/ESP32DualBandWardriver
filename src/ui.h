@@ -73,6 +73,7 @@ class UI {
     Menu* current_menu = nullptr;
 
     uint8_t stat_display_mode = 0;
+    uint8_t last_stat_display_mode = 255; // 255 = uninitialized, forces clear on first draw
 
     void begin();
     void main(uint32_t currentTime);

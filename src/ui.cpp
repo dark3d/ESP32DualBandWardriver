@@ -132,7 +132,13 @@ void UI::updateStats(uint32_t currentTime, uint32_t wifiCount, uint32_t count2g4
   lastUpdateTime = currentTime;
 
   display.tft->setRotation(3);  // Landscape mode
-  // No fillRect/clearScreen here — text is drawn with explicit background
+
+  // Clear screen only when switching display modes to avoid overlap.
+  // Not called on every refresh so no flicker.
+  if (this->stat_display_mode != this->last_stat_display_mode) {
+    display.tft->fillScreen(ST77XX_BLACK);
+    this->last_stat_display_mode = this->stat_display_mode;
+  }
   // color (setTextColor fg, ST77XX_BLACK) so each character cell self-erases.
   // Variable-width values are padded with trailing spaces to overwrite any
   // stale digits left from a longer previous value.
