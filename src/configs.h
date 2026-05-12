@@ -19,12 +19,13 @@
 24 TFT
 27 TFT
 28 ACT LED
+25 CHG DETECT (ADC)
 */
 
 #define JCMK_HOST_BOARD
 
 //// Firmware info stuff
-#define FIRMWARE_VERSION "v2.1.0"
+#define FIRMWARE_VERSION "v2.1.1"
 #define DEVICE_NAME      "JCMK C5 Wardriver"
 
 //// Role stuff
@@ -110,6 +111,16 @@
 #define I2C_SDA 5
 
 
+//// CHG detection — XB8608 charge status via GPIO25 ADC
+// The XB8608 CHG signal is attenuated through the board's LED circuit.
+// GPIO25 reads ~0V (ADC ~0)    on battery only.
+// GPIO25 reads ~0.85V (ADC ~1055) with USB power present.
+// Threshold of 500 counts (~0.4V) sits cleanly between both states.
+#define CHG_PIN           25
+#define CHG_ADC_THRESHOLD 500
+#define CHG_ADC_SAMPLES   5
+
+
 //// GPS stuff
 #define GPS_SERIAL_INDEX 1
 #define TX_TO_GPS 13
@@ -159,7 +170,6 @@
 
 //// Power-off stuff
 #define POWEROFF_DEFAULT_MINS  5
-#define USB_DEBOUNCE_READS     3           // consecutive reads before acting on USB state change
 
 //// Settings JSON buffer — bumped from 2048 to handle 30 settings entries
 #define SETTINGS_JSON_SIZE     4096
