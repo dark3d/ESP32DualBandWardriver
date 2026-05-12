@@ -2264,6 +2264,7 @@ void WiFiOps::serveConfigPage() {
 
     // ---- Network ----
     html += "<h3>Network</h3>";
+    html += "<small>Network to connect at boot for web UI access (e.g. home WiFi) — separate from Trigger SSID</small><br><br>";
     html += "AP SSID: <input type=\"text\" name=\"ssid\" value=\"" + cur_ssid + "\"><br>";
     html += "AP Password: <input type=\"password\" name=\"password\" placeholder=\"leave blank to keep\"><br>";
 
@@ -2402,6 +2403,7 @@ void WiFiOps::serveConfigPage() {
       html += "Unable to access SD card.<br>";
     }
 
+    html += "<br><a href='/log'>&#128196; View Live Log</a>";
     html += "</body></html>";
     server.send(200, "text/html", html);
   });
@@ -2622,6 +2624,45 @@ void WiFiOps::serveConfigPage() {
     this->last_web_client_activity = millis();
   });
 
+  // ---- GET /log : live log viewer ----
+  server.on("/log", HTTP_GET, [this]() {
+    this->last_web_client_activity = millis();
+
+    // Build log output oldest-first from the ring buffer
+    String logHtml = "<!DOCTYPE html><html><head>";
+    logHtml += "<meta charset='utf-8'>";
+    logHtml += "<meta http-equiv='refresh' content='2'>";
+    logHtml += "<title>C5 Wardriver Log</title>";
+    logHtml += "<style>";
+    logHtml += "body{background:#000;color:#0f0;font-family:monospace;font-size:12px;padding:8px;}";
+    logHtml += ".warn{color:#ff0;} .good{color:#0f0;} .std{color:#aaa;}";
+    logHtml += "a{color:#08f;}";
+    logHtml += "</style></head><body>";
+    logHtml += "<b>C5 Wardriver — Live Log</b> ";
+    logHtml += "<a href='/'>&#8592; Back</a><br>";
+    logHtml += "<small>Auto-refreshes every 2s. Showing last " +
+    String(Logger::ring_count) + "/" +
+    String(LOG_RING_SIZE) + " lines.</small><hr>";
+
+    // Walk ring buffer oldest-first
+    int start = (Logger::ring_count < LOG_RING_SIZE)
+    ? 0
+    : Logger::ring_head;
+
+    for (int i = 0; i < Logger::ring_count; i++) {
+      int idx = (start + i) % LOG_RING_SIZE;
+      String line = Logger::ring[idx];
+
+      String css = "std";
+      if (line.startsWith("[!]")) css = "warn";
+      else if (line.startsWith("[+]")) css = "good";
+
+      logHtml += "<span class='" + css + "'>" + line + "</span><br>";
+    }
+
+    logHtml += "</body></html>";
+    server.send(200, "text/html", logHtml);
+  });
   server.begin();
 }
 
