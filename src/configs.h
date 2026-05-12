@@ -25,7 +25,7 @@
 #define JCMK_HOST_BOARD
 
 //// Firmware info stuff
-#define FIRMWARE_VERSION "v2.1.1"
+#define FIRMWARE_VERSION "v2.1.2"
 #define DEVICE_NAME      "JCMK C5 Wardriver"
 
 //// Role stuff
@@ -130,7 +130,7 @@
 //// SD stuff
 #define SPI_SCK  6
 #define SPI_MISO 2
-#define SPI_MOSI 7 
+#define SPI_MOSI 7
 #define SD_CS    10
 
 #define UPDATE_KEY "UpdateFile"
@@ -167,6 +167,7 @@
 #define DOCK_SCAN_INTERVAL     30 * 1000   // passive scan every 30s while docked
 #define DOCK_DEPART_SCANS      2           // consecutive misses before resuming wardrive
 #define DOCK_FAIL_DISPLAY_MS   20 * 1000   // show K1T failure message for 20s
+#define STANDBY_SCAN_INTERVAL  30 * 1000   // scan for K1T every 30s while in standby (no GPS)
 
 //// Power-off stuff
 #define POWEROFF_DEFAULT_MINS  5

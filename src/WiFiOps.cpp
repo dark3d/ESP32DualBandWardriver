@@ -2897,7 +2897,16 @@ void WiFiOps::handleDockConnecting() {
     this->serving = true;
     this->last_web_client_activity = millis();
 
-    this->dock_state = DOCK_STATE_UPLOADING;
+    if (this->dock_webui_only) {
+      // Tier 1: no GPS fix — serve web UI only, skip upload
+      Logger::log(STD_MSG, "[DOCK] Tier 1 — web UI only (no GPS fix)");
+      display.tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
+      display.tft->println("No GPS - web UI only");
+      this->dock_state = DOCK_STATE_MONITORING;
+    } else {
+      // Tier 2: GPS fix — full dock mode
+      this->dock_state = DOCK_STATE_UPLOADING;
+    }
 
   } else {
     WiFi.disconnect(true);
@@ -2964,6 +2973,14 @@ void WiFiOps::handleDockMonitoring(uint32_t currentTime) {
   // Service any web browser clients
   server.handleClient();
 
+  // Tier 1 → Tier 2 upgrade: GPS fix acquired while in web-UI-only mode
+  if (this->dock_webui_only && gps.getFixStatus() && sd_obj.supported) {
+    Logger::log(GUD_MSG, "[DOCK] GPS fix acquired — upgrading Tier 1 -> Tier 2");
+    this->dock_webui_only = false;
+    this->handleDockUploading();
+    return;
+  }
+
   if (currentTime - this->dock_last_scan_time < DOCK_SCAN_INTERVAL)
     return; // not time yet
 
@@ -3020,6 +3037,7 @@ void WiFiOps::departDock() {
   this->dock_connect_attempts = 0;
   this->dock_depart_count     = 0;
   this->dock_ip               = "";
+  this->dock_webui_only       = false;
 
   Logger::log(GUD_MSG, "[DOCK] Departed — wardriving resumed");
 
@@ -3053,6 +3071,24 @@ void WiFiOps::main(uint32_t currentTime) {
     }
     return;
   }
+  // Chunk 6: Standby K1T detection — runs even without GPS fix.
+  // Tier 1 (no GPS): connect + web UI only.
+  // Tier 2 (GPS fix): full dock mode with upload.
+  if (this->current_scan_mode == WIFI_STANDBY &&
+    this->dock_state == DOCK_STATE_NONE &&
+    this->run_mode == SOLO_MODE) {
+    String trigSSID = settings.loadSetting<String>(TRIGGER_SSID_NAME);
+  if (!trigSSID.isEmpty() &&
+    currentTime - this->standby_scan_time >= STANDBY_SCAN_INTERVAL) {
+    this->standby_scan_time = currentTime;
+  if (this->scanForTriggerSSID()) {
+    Logger::log(STD_MSG, "[DOCK] Trigger SSID found in standby: " + trigSSID);
+    this->dock_webui_only       = !gps.getFixStatus();
+    this->dock_state            = DOCK_STATE_CONNECTING;
+    this->dock_connect_attempts = 0;
+  }
+    }
+    }
 
   if (this->run_mode == CORE_MODE) {
     if (currentTime - g_last_debug_print >= DEBUG_OUTPUT_DELAY) {

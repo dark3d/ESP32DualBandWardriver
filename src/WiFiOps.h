@@ -176,6 +176,8 @@ class WiFiOps
     uint32_t dock_last_scan_time   = 0;
     int      dock_depart_count     = 0;
     uint32_t geo_passive_scan_time = 0; // for geofence-paused trigger scans
+    uint32_t standby_scan_time     = 0; // for periodic K1T scan in standby (no GPS)
+    bool     dock_webui_only       = false; // true = Tier 1 (web UI only, no GPS fix)
 
     bool scanForTriggerSSID();    // synchronous passive scan for trigger SSID
     void runDockMode(uint32_t currentTime);
