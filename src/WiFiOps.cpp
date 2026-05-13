@@ -2255,8 +2255,6 @@ void WiFiOps::serveConfigPage() {
     String cur_wigle_user  = settings.loadSetting<String>("wu");
     String cur_wdg_key     = settings.loadSetting<String>(WDG_KEY_NAME);
     String cur_t_ssid      = settings.loadSetting<String>(TRIGGER_SSID_NAME);
-    bool   cur_po_en       = settings.loadSetting<bool>(POWEROFF_EN_NAME);
-    int    cur_po_min      = settings.loadSetting<int>(POWEROFF_MIN_NAME);
     int    cur_mode        = settings.loadSetting<int>("m");
     bool   cur_enc         = settings.loadSetting<bool>("e");
 
@@ -2287,15 +2285,6 @@ void WiFiOps::serveConfigPage() {
     html += "connect, and upload all pending logs to WiGLE and WDG Wars.</small><br><br>";
     html += "Trigger SSID: <input type=\"text\" name=\"trigger_ssid\" value=\"" + cur_t_ssid + "\"><br>";
     html += "Trigger Password: <input type=\"password\" name=\"trigger_pass\" placeholder=\"leave blank to keep\"><br>";
-
-    // ---- Power Management ----
-    html += "<h3>Power Management</h3>";
-    html += "Enable Power-Off Timer: <input type=\"checkbox\" name=\"poweroff_en\" value=\"true\"";
-    if (cur_po_en) html += " checked";
-    html += "><br>";
-    html += "Power-Off Delay (minutes, 1-60): <input type=\"number\" name=\"poweroff_mins\" min=\"1\" max=\"60\" value=\"";
-    html += String(cur_po_min > 0 ? cur_po_min : POWEROFF_DEFAULT_MINS);
-    html += "\"><br>";
 
     // ---- Admin ----
     html += "<h3>Admin</h3>";
@@ -2456,17 +2445,6 @@ void WiFiOps::serveConfigPage() {
       settings.saveSetting<bool>(TRIGGER_PASS_NAME, server.arg("trigger_pass"));
       anyChange = true;
     }
-
-    // Power Management
-    bool poEn = server.hasArg("poweroff_en") && server.arg("poweroff_en") == "true";
-    settings.saveSetting<bool>(POWEROFF_EN_NAME, poEn);
-    if (server.hasArg("poweroff_mins") && server.arg("poweroff_mins") != "") {
-      int mins = server.arg("poweroff_mins").toInt();
-      if (mins < 1)  mins = 1;
-      if (mins > 60) mins = 60;
-      settings.saveSetting<bool>(POWEROFF_MIN_NAME, mins, true);
-    }
-    anyChange = true;
 
     // Admin password
     if (server.hasArg("admin_pass") && server.arg("admin_pass") != "") {

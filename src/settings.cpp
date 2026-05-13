@@ -498,38 +498,8 @@ bool Settings::createDefaultSettings(fs::FS &fs, bool spec, uint8_t index, Strin
     jsonBuffer["Settings"][3]["range"]["min"] = 1;
     jsonBuffer["Settings"][3]["range"]["max"] = 10;
 
-    jsonBuffer["Settings"][4]["name"] = "ek";
-    jsonBuffer["Settings"][4]["type"] = "String";
-    jsonBuffer["Settings"][4]["value"] = "";
-    jsonBuffer["Settings"][4]["range"]["min"] = "";
-    jsonBuffer["Settings"][4]["range"]["max"] = "";
-
-    jsonBuffer["Settings"][5]["name"] = "wu";
-    jsonBuffer["Settings"][5]["type"] = "String";
-    jsonBuffer["Settings"][5]["value"] = "";
-    jsonBuffer["Settings"][5]["range"]["min"] = "";
-    jsonBuffer["Settings"][5]["range"]["max"] = "";
-
-    jsonBuffer["Settings"][6]["name"] = "wt";
-    jsonBuffer["Settings"][6]["type"] = "String";
-    jsonBuffer["Settings"][6]["value"] = "";
-    jsonBuffer["Settings"][6]["range"]["min"] = "";
-    jsonBuffer["Settings"][6]["range"]["max"] = "";
-
-    jsonBuffer["Settings"][7]["name"] = "p";
-    jsonBuffer["Settings"][7]["type"] = "String";
-    jsonBuffer["Settings"][7]["value"] = "";
-    jsonBuffer["Settings"][7]["range"]["min"] = "";
-    jsonBuffer["Settings"][7]["range"]["max"] = "";
-
-    jsonBuffer["Settings"][8]["name"] = "s";
-    jsonBuffer["Settings"][8]["type"] = "String";
-    jsonBuffer["Settings"][8]["value"] = "";
-    jsonBuffer["Settings"][8]["range"]["min"] = "";
-    jsonBuffer["Settings"][8]["range"]["max"] = "";
-
     // --------------------------------------------------------
-    // Chunk 1: New settings entries (9-29)
+    // Chunk 1: New settings entries (9-27)
     // --------------------------------------------------------
 
     // [9] WDG Wars API key
@@ -553,51 +523,34 @@ bool Settings::createDefaultSettings(fs::FS &fs, bool spec, uint8_t index, Strin
     jsonBuffer["Settings"][11]["range"]["min"] = "";
     jsonBuffer["Settings"][11]["range"]["max"] = "";
 
-    // [12] Power-off timer enabled (default: true)
-    jsonBuffer["Settings"][12]["name"] = POWEROFF_EN_NAME;
-    jsonBuffer["Settings"][12]["type"] = "bool";
-    jsonBuffer["Settings"][12]["value"] = true;
-    jsonBuffer["Settings"][12]["range"]["min"] = false;
-    jsonBuffer["Settings"][12]["range"]["max"] = true;
+    // [12] Admin password for Basic Auth (empty = no auth)
+    jsonBuffer["Settings"][12]["name"] = ADMIN_PASS_NAME;
+    jsonBuffer["Settings"][12]["type"] = "String";
+    jsonBuffer["Settings"][12]["value"] = "";
+    jsonBuffer["Settings"][12]["range"]["min"] = "";
+    jsonBuffer["Settings"][12]["range"]["max"] = "";
 
-    // [13] Power-off delay in minutes (default: 5, range 1-60)
-    jsonBuffer["Settings"][13]["name"] = POWEROFF_MIN_NAME;
-    jsonBuffer["Settings"][13]["type"] = "Int";
-    jsonBuffer["Settings"][13]["value"] = POWEROFF_DEFAULT_MINS;
-    jsonBuffer["Settings"][13]["range"]["min"] = 1;
-    jsonBuffer["Settings"][13]["range"]["max"] = 60;
-
-    // [14] Admin password for Basic Auth (empty = no auth)
-    jsonBuffer["Settings"][14]["name"] = ADMIN_PASS_NAME;
-    jsonBuffer["Settings"][14]["type"] = "String";
-    jsonBuffer["Settings"][14]["value"] = "";
-    jsonBuffer["Settings"][14]["range"]["min"] = "";
-    jsonBuffer["Settings"][14]["range"]["max"] = "";
-
-    // [15-24] SSID exclusion list (sx_0 through sx_9)
+    // [13-22] SSID exclusion list (sx_0 through sx_9)
     for (int i = 0; i < MAX_SSID_EXCLUSIONS; i++) {
       String key = "sx_" + String(i);
-      jsonBuffer["Settings"][15 + i]["name"] = key;
-      jsonBuffer["Settings"][15 + i]["type"] = "String";
-      jsonBuffer["Settings"][15 + i]["value"] = "";
-      jsonBuffer["Settings"][15 + i]["range"]["min"] = "";
-      jsonBuffer["Settings"][15 + i]["range"]["max"] = "";
+      jsonBuffer["Settings"][13 + i]["name"] = key;
+      jsonBuffer["Settings"][13 + i]["type"] = "String";
+      jsonBuffer["Settings"][13 + i]["value"] = "";
+      jsonBuffer["Settings"][13 + i]["range"]["min"] = "";
+      jsonBuffer["Settings"][13 + i]["range"]["max"] = "";
     }
 
-    // [25-29] Geofences (geo_0 through geo_4)
+    // [23-27] Geofences (geo_0 through geo_4)
     // Value format: {"lat":0.000000,"lon":0.000000,"rad":0,"label":""}
     for (int i = 0; i < MAX_GEOFENCES; i++) {
       String key = "geo_" + String(i);
-      jsonBuffer["Settings"][25 + i]["name"] = key;
-      jsonBuffer["Settings"][25 + i]["type"] = "String";
-      jsonBuffer["Settings"][25 + i]["value"] = "{\"lat\":0.000000,\"lon\":0.000000,\"rad\":0,\"label\":\"\"}";
-      jsonBuffer["Settings"][25 + i]["range"]["min"] = "";
-      jsonBuffer["Settings"][25 + i]["range"]["max"] = "";
+      jsonBuffer["Settings"][23 + i]["name"] = key;
+      jsonBuffer["Settings"][23 + i]["type"] = "String";
+      jsonBuffer["Settings"][23 + i]["value"] = "{\"lat\":0.000000,\"lon\":0.000000,\"rad\":0,\"label\":\"\"}";
+      jsonBuffer["Settings"][23 + i]["range"]["min"] = "";
+      jsonBuffer["Settings"][23 + i]["range"]["max"] = "";
     }
 
-    if (serializeJson(jsonBuffer, settingsFile) == 0) {
-      Logger::log(WARN_MSG, "Failed to write to file");
-    }
     if (serializeJson(jsonBuffer, settings_string) == 0) {
       Logger::log(WARN_MSG, "Failed to write to string");
     }
