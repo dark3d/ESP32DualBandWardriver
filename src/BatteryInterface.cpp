@@ -35,10 +35,12 @@ void BatteryInterface::main(uint32_t currentTime) {
                     String(CHARGE_RATE_CONFIRM));
 
         if (this->low_rate_count >= CHARGE_RATE_CONFIRM &&
-            this->charging_state) {
+          this->charging_state) {
           this->charging_state = false;
-          Logger::log(WARN_MSG, "[CHG] Power removed — switching to BATTERY");
-        }
+        this->low_rate_count = 0;
+        Logger::log(WARN_MSG, "[CHG] Power removed — switching to BATTERY");
+          }
+
       } else {
         // Rate is non-negative — power is present
         if (this->low_rate_count > 0) {

@@ -31,9 +31,9 @@
 // Detection latency: up to ~90s (2 x 45s CRATE update cycle).
 // This is acceptable for a 5-minute power-off timer.
 // ============================================================
-#define CHARGE_RATE_THRESHOLD   -1.0f  // %/hr below this = battery only
+#define CHARGE_RATE_THRESHOLD   -8.0f  // %/hr — safely below float (-4) above discharge (-10+)
 #define CHARGE_RATE_SAMPLE_MS   45000  // sample every 45s (CRATE update cycle)
-#define CHARGE_RATE_CONFIRM     2      // consecutive low readings to confirm
+#define CHARGE_RATE_CONFIRM     2      // 2 consecutive readings = ~90s detection time
 
 class BatteryInterface {
   private:
