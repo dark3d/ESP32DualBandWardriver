@@ -107,7 +107,7 @@ class WiFiOps
       .nchan = 13,
       .policy = WIFI_COUNTRY_POLICY_AUTO,
     };
-
+    uint32_t dock_depart_time = 0;  // timestamp of last dock departure
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 
     const char* apSSID = "c5wardriver";

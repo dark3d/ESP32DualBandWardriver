@@ -3021,6 +3021,7 @@ void WiFiOps::handleDockMonitoring(uint32_t currentTime) {
   if (this->dock_webui_only && gps.getFixStatus() && sd_obj.supported) {
     Logger::log(GUD_MSG, "[DOCK] GPS fix acquired — upgrading Tier 1 -> Tier 2");
     this->dock_webui_only = false;
+    this->dock_depart_time = millis();
     this->handleDockUploading();
     return;
   }
@@ -3124,7 +3125,8 @@ void WiFiOps::main(uint32_t currentTime) {
     this->run_mode == SOLO_MODE) {
     String trigSSID = settings.loadSetting<String>(TRIGGER_SSID_NAME);
   if (!trigSSID.isEmpty() &&
-    currentTime - this->standby_scan_time >= STANDBY_SCAN_INTERVAL) {
+    currentTime - this->standby_scan_time >= STANDBY_SCAN_INTERVAL &&
+    currentTime - this->dock_depart_time >= 60000) { // 60s cooldown after departing
     this->standby_scan_time = currentTime;
   if (this->scanForTriggerSSID()) {
     Logger::log(STD_MSG, "[DOCK] Trigger SSID found in standby: " + trigSSID);
