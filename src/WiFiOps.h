@@ -8,6 +8,7 @@
 #include "GpsInterface.h"
 #include "Buffer.h"
 #include "display.h"
+#include "BatteryInterface.h"
 #include "SDInterface.h"
 
 #include <esp_now.h>
@@ -29,7 +30,7 @@ extern Buffer buffer;
 extern Utils utils;
 extern Settings settings;
 extern Display display;
-
+extern BatteryInterface battery;
 extern WebServer server;
 
 // ============================================================
@@ -98,6 +99,7 @@ class WiFiOps
 {
   private:
     NimBLEScan* pBLEScan;
+    bool ble_initialized = false;
 
     wifi_country_t country = {
       .cc = "PH",
@@ -201,6 +203,7 @@ class WiFiOps
     uint32_t last_web_client_activity;
     uint32_t last_timer;
     bool use_encryption = false;
+    bool isDocked() { return dock_state != DOCK_STATE_NONE; }
 
     uint8_t current_assignment_version = 1;
     uint8_t current_assigned_scan_idx = 0;
@@ -228,6 +231,7 @@ class WiFiOps
     void deinitWiFi();
     bool tryConnectToWiFi(unsigned long timeoutMs = STATION_CONNECT_TIMEOUT);
     bool backendUpload(String filePath);
+
 
     // --------------------------------------------------------
     // Chunk 3: WDG Wars upload + sidecar tracking system

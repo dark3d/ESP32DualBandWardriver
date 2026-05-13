@@ -12,7 +12,6 @@
 // ============================================================
 // Web log ring buffer — captures the last LOG_RING_SIZE lines
 // so they can be served via the /log web endpoint.
-// Sized to keep RAM impact minimal (~8KB for 100 x 80 chars).
 // ============================================================
 #define LOG_RING_SIZE   100
 #define LOG_LINE_MAX    120  // max chars per line including prefix
@@ -23,8 +22,13 @@ public:
 
   // Ring buffer — public so serveConfigPage() can read it directly
   static String ring[LOG_RING_SIZE];
-  static int    ring_head;   // index of next write slot
-  static int    ring_count;  // how many slots are filled (0..LOG_RING_SIZE)
+  static int    ring_head;
+  static int    ring_count;
+
+  // SD debug log — enabled/disabled from web UI
+  // Call enableSDLog(true) after SD is mounted and setting is loaded.
+  static bool   sd_log_enabled;
+  static void   enableSDLog(bool enable);
 };
 
 #endif

@@ -18,6 +18,7 @@ BatteryInterface battery;
 WiFiOps wifi_ops;
 Utils utils;
 UI ui_obj;
+bool g_force_display_redraw = false;
 
 SPIClass sharedSPI(SPI);
 Display display = Display(&sharedSPI, TFT_CS, TFT_DC, TFT_RST);
@@ -73,6 +74,9 @@ void setup() {
   // Check for firmware updates now
   Logger::log(STD_MSG, "Checking for firmware updates...");
   sd_obj.runUpdate();
+
+  // Enable SD debug logging if setting is on
+  Logger::enableSDLog(settings.loadSetting<bool>(DEBUG_LOG_NAME));
 
   // Init battery
   battery.RunSetup();

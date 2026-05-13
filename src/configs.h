@@ -124,6 +124,9 @@
 
 #define UPDATE_KEY "UpdateFile"
 
+//// Debug log
+#define DEBUG_LOG_FILE "/debug.log"
+
 
 //// Switch stuff
 

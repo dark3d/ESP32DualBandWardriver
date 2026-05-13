@@ -551,6 +551,13 @@ bool Settings::createDefaultSettings(fs::FS &fs, bool spec, uint8_t index, Strin
       jsonBuffer["Settings"][23 + i]["range"]["max"] = "";
     }
 
+    // [28] SD debug log enabled (default: false)
+    jsonBuffer["Settings"][28]["name"] = DEBUG_LOG_NAME;
+    jsonBuffer["Settings"][28]["type"] = "bool";
+    jsonBuffer["Settings"][28]["value"] = false;
+    jsonBuffer["Settings"][28]["range"]["min"] = false;
+    jsonBuffer["Settings"][28]["range"]["max"] = true;
+
     if (serializeJson(jsonBuffer, settings_string) == 0) {
       Logger::log(WARN_MSG, "Failed to write to string");
     }

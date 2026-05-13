@@ -31,6 +31,7 @@
 #define TRIGGER_SSID_NAME  "t_ssid"    // Dock trigger SSID e.g. "K1T" (String)
 #define TRIGGER_PASS_NAME  "t_pass"    // Dock trigger SSID password (String)
 #define ADMIN_PASS_NAME    "a_pass"    // Basic Auth password for web UI (String)
+#define DEBUG_LOG_NAME     "dbg_en"    // SD debug log enabled (bool)
 // SSID exclusion list keys:  "sx_0" through "sx_9"   (String each)
 // Geofence keys:             "geo_0" through "geo_4" (String, JSON encoded)
 // Geofence JSON format: {"lat":0.000000,"lon":0.000000,"rad":0,"label":""}

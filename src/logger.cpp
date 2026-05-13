@@ -1,9 +1,19 @@
 #include "logger.h"
+#include <SD.h>
 
 // Static member definitions
 String Logger::ring[LOG_RING_SIZE];
-int    Logger::ring_head  = 0;
-int    Logger::ring_count = 0;
+int    Logger::ring_head      = 0;
+int    Logger::ring_count     = 0;
+bool   Logger::sd_log_enabled = false;
+
+void Logger::enableSDLog(bool enable) {
+  sd_log_enabled = enable;
+  if (enable)
+    Serial.println("[-] [DBG] SD debug logging enabled -> " + String(DEBUG_LOG_FILE));
+  else
+    Serial.println("[-] [DBG] SD debug logging disabled");
+}
 
 void Logger::log(uint8_t type, String msg) {
   String prefix = "";
@@ -28,4 +38,15 @@ void Logger::log(uint8_t type, String msg) {
   ring_head = (ring_head + 1) % LOG_RING_SIZE;
   if (ring_count < LOG_RING_SIZE)
     ring_count++;
+
+  // Write to SD debug log if enabled
+  #ifdef HAS_SD
+  if (sd_log_enabled) {
+    File f = SD.open(DEBUG_LOG_FILE, FILE_APPEND);
+    if (f) {
+      f.println(line);
+      f.close();
+    }
+  }
+  #endif
 }

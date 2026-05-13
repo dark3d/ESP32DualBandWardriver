@@ -1,7 +1,9 @@
 #include "WiFiOps.h"
 #include "BatteryInterface.h"
+#include "esp_task_wdt.h"
 
 extern BatteryInterface battery;
+extern bool g_force_display_redraw;
 
 static const uint8_t BROADCAST_MAC[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 static const char MAGIC[4] = {'E','N','O','W'};
@@ -1738,14 +1740,20 @@ void WiFiOps::deinitWiFi() {
 }
 
 void WiFiOps::deinitBLE() {
-  Logger::log(STD_MSG, "Deinitializing BLE...");
+  if (!ble_initialized) {
+    Logger::log(STD_MSG, "BLE already deinitialized, skipping");
+    return;
+  }
+  ble_initialized = false;
+  Logger::log(STD_MSG, "Deinitializing BLE...");   // existing line continues here
 
   if (pBLEScan != nullptr) {
     if (pBLEScan->isScanning()) {
       Logger::log(STD_MSG, "Stopping ongoing BLE scan...");
       pBLEScan->stop();
       while (pBLEScan->isScanning()) {
-        delay(10);  // Wait for scan to fully stop
+        delay(10);
+        esp_task_wdt_reset(); // feed watchdog — BLE stop can take several seconds
       }
     }
 
@@ -1772,6 +1780,7 @@ void WiFiOps::initBLE() {
   pBLEScan->setActiveScan(true);
   pBLEScan->setDuplicateFilter(false);       // Disables internal filtering based on MAC
   pBLEScan->setMaxResults(0);                // Prevent storing results in NimBLEScanResults
+  ble_initialized = true;
 }
 
 bool WiFiOps::tryConnectToWiFi(unsigned long timeoutMs) {
@@ -2246,7 +2255,8 @@ bool WiFiOps::checkAuth() {
 void WiFiOps::serveConfigPage() {
 
   // ---- GET / : main config page ----
-  server.on("/", HTTP_GET, [this]() {
+  bool cur_dbg_en = settings.loadSetting<bool>(DEBUG_LOG_NAME);
+  server.on("/", HTTP_GET, [this, cur_dbg_en]() {
     if (!this->checkAuth()) return;
     this->last_web_client_activity = millis();
 
@@ -2255,6 +2265,7 @@ void WiFiOps::serveConfigPage() {
     String cur_wigle_user  = settings.loadSetting<String>("wu");
     String cur_wdg_key     = settings.loadSetting<String>(WDG_KEY_NAME);
     String cur_t_ssid      = settings.loadSetting<String>(TRIGGER_SSID_NAME);
+    bool   cur_dbg_en      = settings.loadSetting<bool>(DEBUG_LOG_NAME);
     int    cur_mode        = settings.loadSetting<int>("m");
     bool   cur_enc         = settings.loadSetting<bool>("e");
 
@@ -2264,7 +2275,7 @@ void WiFiOps::serveConfigPage() {
 
     // ---- Network ----
     html += "<h3>Network</h3>";
-    html += "<small>Network to connect at boot for web UI access (e.g. home WiFi) — separate from Trigger SSID</small><br><br>";
+    html += "<small>Network to connect at boot for web UI access (e.g. home WiFi) - separate from Trigger SSID</small><br><br>";
     html += "AP SSID: <input type=\"text\" name=\"ssid\" value=\"" + cur_ssid + "\"><br>";
     html += "AP Password: <input type=\"password\" name=\"password\" placeholder=\"leave blank to keep\"><br>";
 
@@ -2291,6 +2302,9 @@ void WiFiOps::serveConfigPage() {
     html += "<small>Setting a password enables Basic Auth on the web UI. ";
     html += "Recommended when using dock mode web server on a shared network.</small><br><br>";
     html += "Admin Password: <input type=\"password\" name=\"admin_pass\" placeholder=\"leave blank to keep current\"><br>";
+    html += "<br>SD Debug Log: <input type=\"checkbox\" name=\"dbg_en\" value=\"true\"";
+    if (cur_dbg_en) html += " checked";
+    html += "> <small>Write all log entries to " + String(DEBUG_LOG_FILE) + " on SD card</small><br>";
 
     // ---- SSID Exclusions ----
     html += "<h3>SSID Exclusions (up to " + String(MAX_SSID_EXCLUSIONS) + ")</h3>";
@@ -2355,7 +2369,7 @@ void WiFiOps::serveConfigPage() {
       while (file) {
         if (!file.isDirectory()) {
           String filename = file.name();
-          if (filename.endsWith(".log")) {
+          if (filename.endsWith(".log") && filename != "debug.log") {
             // Check sidecar upload status
             bool wigleDone = SD.exists("/" + filename + ".wigle");
             bool wdgDone   = SD.exists("/" + filename + ".wdg");
@@ -2451,6 +2465,10 @@ void WiFiOps::serveConfigPage() {
       settings.saveSetting<bool>(ADMIN_PASS_NAME, server.arg("admin_pass"));
       anyChange = true;
     }
+    bool dbgEn = server.hasArg("dbg_en") && server.arg("dbg_en") == "true";
+    settings.saveSetting<bool>(DEBUG_LOG_NAME, dbgEn);
+    Logger::enableSDLog(dbgEn);
+    anyChange = true;
 
     // SSID exclusions
     for (int i = 0; i < MAX_SSID_EXCLUSIONS; i++) {
@@ -2876,13 +2894,15 @@ void WiFiOps::handleDockConnecting() {
 
   display.clearScreen();
   display.tft->setCursor(0, 0);
+  display.tft->setTextSize(2);
   display.tft->setTextColor(ST77XX_CYAN, ST77XX_BLACK);
   display.tft->println("DOCK MODE");
   display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-  display.tft->println("Connecting...");
+  display.tft->println("Connecting");
   display.tft->println(trigSSID);
+  display.tft->setTextSize(1);
   display.tft->println("Attempt " +
-                       String(this->dock_connect_attempts + 1) + "/3");
+  String(this->dock_connect_attempts + 1) + "/3");
 
   // Switch WiFi from scan/promiscuous to STA client
   this->deinitBLE();
@@ -3062,6 +3082,7 @@ void WiFiOps::departDock() {
   this->dock_depart_count     = 0;
   this->dock_ip               = "";
   this->dock_webui_only       = false;
+  g_force_display_redraw = true;
 
   Logger::log(GUD_MSG, "[DOCK] Departed — wardriving resumed");
 
