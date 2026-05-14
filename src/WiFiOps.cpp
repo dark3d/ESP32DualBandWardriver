@@ -1999,8 +1999,8 @@ bool WiFiOps::backendUpload(String filePath) {
       
     client->stop();
 
-    Serial.println("WiGLE response:");
-    Serial.println(response);
+    String respTrunc = response.length() > 200 ? response.substring(0, 200) : response;
+    Logger::log(STD_MSG, "[WIGLE] Response: " + respTrunc);
     
     return true;
 }
@@ -2081,7 +2081,7 @@ bool WiFiOps::wdgwarsUpload(String filePath) {
   }
 
   // HTTP request
-  client->println("POST /api/upload-csv HTTP/1.1");
+  client->println("POST /api/v2/upload-csv HTTP/1.1");
   client->println("Host: wdgwars.pl");
   client->println("User-Agent: ESP32Uploader/1.0");
   client->println("Accept: application/json");
@@ -2125,16 +2125,18 @@ bool WiFiOps::wdgwarsUpload(String filePath) {
       char c = client->read();
       response += c;
     }
+    if (!client->connected() && !client->available())
+      break;
   }
   client->stop();
 
-  Serial.println("[WDG] Response:");
-  Serial.println(response);
+// Capture first 200 chars of response for log viewer
+  String respTrunc = response.length() > 200 ? response.substring(0, 200) : response;
+  Logger::log(STD_MSG, "[WDG] Response: " + respTrunc);
 
   // WDG Wars returns 200 on success
-  bool ok = response.indexOf("HTTP/1.1 200") >= 0 ||
-            response.indexOf("HTTP/1.0 200") >= 0 ||
-            response.indexOf("\"success\"") >= 0;
+  bool ok = response.indexOf("202 Accepted") >= 0 ||
+  response.indexOf("\"ok\":true") >= 0;
 
   display.clearScreen();
   display.drawCenteredText(ok ? "WDG OK" : "WDG Failed", true);
@@ -2210,7 +2212,7 @@ void WiFiOps::uploadAllPending() {
   while (f) {
     if (!f.isDirectory()) {
       String name = f.name();
-      if (name.endsWith(".log")) {
+      if (name.endsWith(".log") && name != "debug.log") {
         String path = "/" + name;
         bool wigle_done = this->sidecarExists(path, "wigle");
         bool wdg_done   = this->sidecarExists(path, "wdg");
