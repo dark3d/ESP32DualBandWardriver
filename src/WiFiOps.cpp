@@ -2221,9 +2221,15 @@ void WiFiOps::uploadAllPending() {
           skipped++;
         } else {
           Logger::log(STD_MSG, "[UPLOAD] Pending: " + path);
+          bool wigle_needed = !wigle_done;
+          bool wdg_needed   = !wdg_done;
           bool ok = this->uploadFile(path, false);
-          if (ok) uploaded++;
-          else    failed++;
+          // Count as uploaded if all needed services succeeded
+          bool wigle_now = this->sidecarExists(path, "wigle");
+          bool wdg_now   = this->sidecarExists(path, "wdg");
+          bool fully_done = (!wigle_needed || wigle_now) && (!wdg_needed || wdg_now);
+          if (fully_done) uploaded++;
+          else            failed++;
         }
       }
     }
