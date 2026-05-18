@@ -2844,6 +2844,9 @@ bool WiFiOps::begin(bool skip_admin) {
   // Chunk 5: load geofence cache now that settings are fully initialised
   this->loadGeofenceCache();
 
+  // Force Screen 1 redraw to clear any AP/admin phase display remnants
+  g_force_display_redraw = true;
+
   return true;
 }
 
