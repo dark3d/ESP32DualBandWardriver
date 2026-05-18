@@ -511,7 +511,9 @@ void UI::main(uint32_t currentTime) {
   extern bool g_force_display_redraw;
   if (g_force_display_redraw) {
     this->last_stat_display_mode = 255;
-    g_force_display_redraw = false;
+    this->lastUpdateTime         = 0;
+    g_force_display_redraw       = false;
+    display.tft->fillScreen(ST77XX_BLACK);
   }
 
   // Don't draw stats while docked — dock mode manages its own display
