@@ -1372,7 +1372,7 @@ void WiFiOps::loadGeofenceCache() {
                 ": \"" + geo_cache[i].label +
                 "\" lat=" + String(lat, 6) +
                 " lon=" + String(lon, 6) +
-                " rad=" + String(rad) + "m");
+                " rad=" + String((int)(rad * 3.28084)) + "ft");
   }
 
   geo_cache_loaded = true;
@@ -1424,8 +1424,8 @@ bool WiFiOps::checkGeofences() {
 
         Logger::log(STD_MSG, "[GEO] Entered zone: \"" +
                     this->current_geo_label + "\"  dist=" +
-                    String((int)dist) + "m  rad=" +
-                    String(geo_cache[i].rad) + "m");
+                    String((int)(dist * 3.28084)) + "ft  rad=" +
+                    String((int)(geo_cache[i].rad * 3.28084)) + "ft");
 
         // Update TFT to show paused state
         display.clearScreen();
@@ -1433,8 +1433,11 @@ bool WiFiOps::checkGeofences() {
         display.tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
         display.tft->println("GEOFENCE PAUSED");
         display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-        display.tft->println(this->current_geo_label);
-        display.tft->println("Dist: " + String((int)dist) + "m");
+        int dist_ft = (int)(dist * 3.28084);
+        String dist_str = (dist_ft >= 528) ?
+          String(dist_ft / 5280.0f, 2) + "mi" :
+          String(dist_ft) + "ft";
+        display.tft->println(this->current_geo_label + " " + dist_str);
         this->geo_display_shown = true;
       }
 
