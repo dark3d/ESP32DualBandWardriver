@@ -303,7 +303,10 @@ void UI::drawStatsNew(uint32_t currentTime, uint32_t count2g4, uint32_t count5g,
   // ---- Geofence label (size 1, bottom row) ----
   display.tft->setTextSize(1);
   display.tft->setCursor(0, 71);
-  if (wifi_ops.in_geofence && wifi_ops.current_geo_label.length() > 0) {
+  if (!sd_obj.supported) {
+    display.tft->setTextColor(ST77XX_RED, ST77XX_BLACK);
+    display.tft->print("NO SD CARD                ");
+  } else if (wifi_ops.in_geofence && wifi_ops.current_geo_label.length() > 0) {
     display.tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
     String geo = "GEO: " + wifi_ops.current_geo_label;
     while (geo.length() < 26) geo += " ";
