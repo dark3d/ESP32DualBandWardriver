@@ -60,6 +60,7 @@ class UI {
     Menu upload_menu;
     Menu delete_all_menu;
     Menu upload_all_menu;
+    Menu mark_geofence_menu;
     
 
     bool hard_refresh = false;

@@ -7,12 +7,14 @@ void UI::begin() {
   upload_menu.list  = new LinkedList<MenuNode>();
   delete_all_menu.list = new LinkedList<MenuNode>();
   upload_all_menu.list = new LinkedList<MenuNode>();
+  mark_geofence_menu.list = new LinkedList<MenuNode>();
 
   mode_menu.name   = "Mode";
   action_menu.name = "Action";
   upload_menu.name = "Upload";
   delete_all_menu.name = "Delete All?";
   upload_all_menu.name = "Upload All?";
+  mark_geofence_menu.name = "Mark Geofence Center?";
 
   this->buildSDFileMenu();
 
@@ -21,6 +23,73 @@ void UI::begin() {
   upload_menu.parentMenu = &action_menu;  // Upload is a submenu of Action
   delete_all_menu.parentMenu = &sd_file_menu;
   upload_all_menu.parentMenu = &sd_file_menu;
+  mark_geofence_menu.parentMenu = &sd_file_menu;
+
+  // Geofence menu
+  this->addNodes(&mark_geofence_menu, "No", ST77XX_WHITE, NULL, 0, [this]() {
+    this->current_menu = mark_geofence_menu.parentMenu;
+  });
+  this->addNodes(&mark_geofence_menu, "Yes", ST77XX_WHITE, NULL, 0, [this]() {
+    display.clearScreen();
+
+    // Check to make sure we have GPS
+    if (gps.getFixStatus() && gps.getGpsModuleStatus()) {
+      bool save_available = false;
+
+      // Look for next available geofence
+      for (int i = 0; i < MAX_GEOFENCES; i++) {
+        String geoStr = settings.loadSetting<String>("geo_" + String(i));
+
+        // Parse stored JSON geo string
+        DynamicJsonDocument geoDoc(256);
+        if (!geoStr.isEmpty() && deserializeJson(geoDoc, geoStr) == DeserializationError::Ok) {
+          float gLat = geoDoc["lat"];
+          float gLon = geoDoc["lon"];
+          int gRad = geoDoc["rad"];
+          String old_label = geoDoc["label"];
+          if (gLat != 0.0 && gLon != 0.0 && old_label != "") {
+            Logger::log(STD_MSG, "geo_" + String(i) + " lat: " + String(gLat) + ", label: " + old_label + " exists. Skipping...");
+            continue;
+          }
+          else {
+            save_available = true;
+            Logger::log(STD_MSG, "geo_" + String(i) + " available. Creating...");
+            int rad = (int)(0.10 * 1609.34);     // convert to meters for storage
+            String label = "Live Geofence " + String(i);
+
+            DynamicJsonDocument geoDoc(256);
+            geoDoc["lat"]   = gps.getLat().toFloat();
+            geoDoc["lon"]   = gps.getLon().toFloat();
+            geoDoc["rad"]   = rad;
+            geoDoc["label"] = label;
+            String geoStr;
+            serializeJson(geoDoc, geoStr);
+
+            settings.saveSetting<bool>("geo_" + String(i), geoStr);
+
+            wifi_ops.reloadGeofenceCache();
+
+            Logger::log(GUD_MSG, "Saved geofence center \"" + label + "\" as geo_" + String(i));
+
+            display.drawCenteredText("New Geofence Saved", true);
+
+            break;
+
+          }
+        }
+      }
+      if (!save_available) {
+        display.drawCenteredText("No available save slots", true);
+      }
+    }
+    else {
+      display.drawCenteredText("Need GPS Fix", true);
+    }
+
+    delay(2000);
+
+    this->current_menu = &sd_file_menu;
+  });
 
   // Delete all Menu
   this->addNodes(&delete_all_menu, "No", ST77XX_WHITE, NULL, 0, [this]() {
@@ -34,9 +103,11 @@ void UI::begin() {
     buffer.setFileName("");
 
     for (int i = 0; i < sd_obj.sd_files->size(); i++) {
-      if (sd_obj.sd_files->get(i).startsWith("wardrive_")) {
+      if (sd_obj.sd_files->get(i).startsWith("wardrive_") || sd_obj.sd_files->get(i).startsWith("wigle-")) {
         if (sd_obj.removeFile("/" + sd_obj.sd_files->get(i))) {
           Logger::log(STD_MSG, "Removed file: " + sd_obj.sd_files->get(i));
+          sd_obj.removeFile("/" + sd_obj.sd_files->get(i) + ".wdg");
+          sd_obj.removeFile("/" + sd_obj.sd_files->get(i) + ".wigle");
         }
         else {
           Logger::log(WARN_MSG, "Could not remove file: " + sd_obj.sd_files->get(i));
@@ -62,7 +133,7 @@ void UI::begin() {
     if (wifi_ops.tryConnectToWiFi()) {
       delay(1000);
       for (int i = 0; i < sd_obj.sd_files->size(); i++) {
-        if (sd_obj.sd_files->get(i).startsWith("wardrive_")) {
+        if (sd_obj.sd_files->get(i).startsWith("wardrive_") || sd_obj.sd_files->get(i).startsWith("wigle-")) {
           Logger::log(STD_MSG, "Uploading " + sd_obj.sd_files->get(i) + "...");
           if (wifi_ops.uploadFile("/" + sd_obj.sd_files->get(i), true, WIGLE_UPLOAD)) {
             display.clearScreen();
@@ -84,7 +155,7 @@ void UI::begin() {
     if (wifi_ops.tryConnectToWiFi()) {
       delay(1000);
       for (int i = 0; i < sd_obj.sd_files->size(); i++) {
-        if (sd_obj.sd_files->get(i).startsWith("wardrive_")) {
+        if (sd_obj.sd_files->get(i).startsWith("wardrive_") || sd_obj.sd_files->get(i).startsWith("wigle-")) {
           Logger::log(STD_MSG, "Uploading " + sd_obj.sd_files->get(i) + "...");
           if (wifi_ops.uploadFile("/" + sd_obj.sd_files->get(i), true, WDG_UPLOAD)) {
             display.clearScreen();
@@ -106,7 +177,7 @@ void UI::begin() {
     if (wifi_ops.tryConnectToWiFi()) {
       delay(1000);
       for (int i = 0; i < sd_obj.sd_files->size(); i++) {
-        if (sd_obj.sd_files->get(i).startsWith("wardrive_")) {
+        if (sd_obj.sd_files->get(i).startsWith("wardrive_") || sd_obj.sd_files->get(i).startsWith("wigle-")) {
           Logger::log(STD_MSG, "Uploading " + sd_obj.sd_files->get(i) + "...");
           if (wifi_ops.uploadFile("/" + sd_obj.sd_files->get(i), true, BOTH_UPLOAD)) {
             display.clearScreen();
@@ -531,13 +602,17 @@ void UI::buildSDFileMenu() {
       this->current_menu = &upload_all_menu;
     });
 
+    this->addNodes(&sd_file_menu, "Mark New Geofence", ST77XX_WHITE, NULL, 0, [this]() {
+      this->current_menu = &mark_geofence_menu;
+    });
+
     this->addNodes(&sd_file_menu, "Mode", ST77XX_WHITE, NULL, 0, [this]() {
       this->current_menu = &mode_menu;
     });
 
     for (int i = 0; i < sd_obj.sd_files->size(); i++) {
       File current_file = sd_obj.getFile("/" + sd_obj.sd_files->get(i));
-      if (sd_obj.sd_files->get(i).startsWith("wardrive_")) {
+      if (sd_obj.sd_files->get(i).startsWith("wardrive_") || sd_obj.sd_files->get(i).startsWith("wigle-")) {
         this->addNodes(&sd_file_menu, sd_obj.sd_files->get(i), ST77XX_WHITE, NULL, 0, [this, i]() {
           sd_obj.selected_file_name = sd_obj.sd_files->get(i);
           Logger::log(STD_MSG, sd_obj.sd_files->get(i) + " selected");
