@@ -159,6 +159,16 @@ void SDInterface::runUpdate() {
   const esp_partition_t *check_running = esp_ota_get_running_partition();
   Logger::log(STD_MSG, "Running partition: " + String(check_running->label));
 
+  esp_ota_img_states_t ota_state;
+  if (esp_ota_get_state_partition(check_running, &ota_state) == ESP_OK) {
+    Logger::log(STD_MSG, "OTA state: " + String((int)ota_state));
+
+    if (ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+      Logger::log(STD_MSG, "Marking OTA image valid");
+      esp_ota_mark_app_valid_cancel_rollback();
+    }
+  }
+
   String bin_name = this->findFirstBinFile("/");
 
   if (bin_name == "") {
