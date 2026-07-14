@@ -390,6 +390,9 @@ void UI::drawStatsNew(uint32_t currentTime, uint32_t count2g4, uint32_t count5g,
   if (has_fix) {
     display.tft->setTextColor(ST77XX_GREEN, ST77XX_BLACK);
     display.tft->print(String(gpsSats) + " sats  ");
+  } else if (wifi_ops.isGpsBufferingEnabled()) {
+    display.tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
+    display.tft->print("No GPS BUF:" + String(wifi_ops.getPendingCount()) + "  ");
   } else {
     display.tft->setTextColor(ST77XX_RED, ST77XX_BLACK);
     display.tft->print("No GPS fix  ");
