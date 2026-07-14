@@ -495,7 +495,7 @@ void GpsInterface::setGPSInfo() {
     }
     this->altf = (float)alt / 1000;
 
-    this->accuracy = 2.5 * ((float)nmea.getHDOP()/10);
+    this->accuracy = nmea.getHDOP() > 0 ? 2.5 * ((float)nmea.getHDOP()/10) : GPS_ACCURACY_UNKNOWN;
   } else {
     this->lat = "";
     this->lon = "";
