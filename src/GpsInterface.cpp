@@ -486,15 +486,22 @@ void GpsInterface::setGPSInfo() {
 
   this->datetime = this->dt_string_from_gps();
 
-  this->lat = String((float)nmea.getLatitude()/1000000, 7);
-  this->lon = String((float)nmea.getLongitude()/1000000, 7);
-  long alt = 0;
-  if (!nmea.getAltitude(alt)){
-    alt = 0;
-  }
-  this->altf = (float)alt / 1000;
+  if (fix) {
+    this->lat = String((float)nmea.getLatitude()/1000000, 7);
+    this->lon = String((float)nmea.getLongitude()/1000000, 7);
+    long alt = 0;
+    if (!nmea.getAltitude(alt)){
+      alt = 0;
+    }
+    this->altf = (float)alt / 1000;
 
-  this->accuracy = 2.5 * ((float)nmea.getHDOP()/10);
+    this->accuracy = 2.5 * ((float)nmea.getHDOP()/10);
+  } else {
+    this->lat = "";
+    this->lon = "";
+    this->altf = 0.0;
+    this->accuracy = 0.0;
+  }
 
   //nmea.clear();
 }
