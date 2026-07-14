@@ -125,6 +125,14 @@ class WiFiOps
 
     bool connected_as_client = false;
 
+    bool     gps_buffering_enabled = false;
+    uint32_t pending_count = 0;
+    double   last_fix_lat = 0.0;
+    double   last_fix_lon = 0.0;
+    uint32_t last_fix_millis = 0;
+    bool     have_last_fix = false;
+    void bufferPendingDetection(const String& line);
+
     uint8_t current_scan_mode;
     uint32_t init_time;
     struct mac_addr mac_history[mac_history_len];
