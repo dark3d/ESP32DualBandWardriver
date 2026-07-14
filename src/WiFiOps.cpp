@@ -2293,32 +2293,37 @@ void WiFiOps::uploadAllPending() {
   int skipped  = 0;
   int failed   = 0;
 
+  LinkedList<String> logs;
   File f = root.openNextFile();
   while (f) {
     if (!f.isDirectory()) {
       String name = f.name();
-      if (name.endsWith(".log") && name != "debug.log") {
-        String path = "/" + name;
-        bool wigle_done = this->sidecarExists(path, "wigle");
-        bool wdg_done   = this->sidecarExists(path, "wdg");
-
-        if (wigle_done && wdg_done) {
-          skipped++;
-        } else {
-          Logger::log(STD_MSG, "[UPLOAD] Pending: " + path);
-          bool wigle_needed = !wigle_done;
-          bool wdg_needed   = !wdg_done;
-          bool ok = this->uploadFile(path, false, BOTH_UPLOAD);
-          // Count as uploaded if all needed services succeeded
-          bool wigle_now = this->sidecarExists(path, "wigle");
-          bool wdg_now   = this->sidecarExists(path, "wdg");
-          bool fully_done = (!wigle_needed || wigle_now) && (!wdg_needed || wdg_now);
-          if (fully_done) uploaded++;
-          else            failed++;
-        }
-      }
+      if (name.endsWith(".log") && name != "debug.log")
+        logs.add("/" + name);
     }
     f = root.openNextFile();
+  }
+  root.close();
+
+  for (int idx = 0; idx < logs.size(); idx++) {
+    String path = logs.get(idx);
+    bool wigle_done = this->sidecarExists(path, "wigle");
+    bool wdg_done   = this->sidecarExists(path, "wdg");
+
+    if (wigle_done && wdg_done) {
+      skipped++;
+    } else {
+      Logger::log(STD_MSG, "[UPLOAD] Pending: " + path);
+      bool wigle_needed = !wigle_done;
+      bool wdg_needed   = !wdg_done;
+      bool ok = this->uploadFile(path, false, BOTH_UPLOAD);
+      // Count as uploaded if all needed services succeeded
+      bool wigle_now = this->sidecarExists(path, "wigle");
+      bool wdg_now   = this->sidecarExists(path, "wdg");
+      bool fully_done = (!wigle_needed || wigle_now) && (!wdg_needed || wdg_now);
+      if (fully_done) uploaded++;
+      else            failed++;
+    }
   }
 
   Logger::log(GUD_MSG, "[UPLOAD] Done. Uploaded:" + String(uploaded) +
