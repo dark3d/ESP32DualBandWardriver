@@ -1409,6 +1409,9 @@ bool WiFiOps::checkGeofences(char* dist_str, size_t dist_str_len) {
   if (!any_valid)
     return false;
 
+  if (!gps.getFixStatus())
+    return false;
+
   float cur_lat = gps.getLat().toFloat();
   float cur_lon = gps.getLon().toFloat();
 
