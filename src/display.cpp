@@ -31,6 +31,11 @@ void Display::begin() {
 
   this->drawMonochromeImage160x80(logo2, 160, 80);
 
+  tft->setTextSize(1);
+  tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  tft->setCursor(0, TFT_HEIGHT - 8);
+  tft->print(FIRMWARE_VERSION);
+
   this->ctrlBacklight(true);
 }
 
