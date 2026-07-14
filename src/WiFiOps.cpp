@@ -1,9 +1,15 @@
 #include "WiFiOps.h"
 #include "BatteryInterface.h"
 #include "esp_task_wdt.h"
+#include "esp_system.h"
 
 extern BatteryInterface battery;
 extern bool g_force_display_redraw;
+
+// Survives ESP.restart() (reboot-to-upload dock path) but not a power cycle.
+// Set once the arrival's dock upload has drained; blocks re-docking until the
+// trigger SSID has been absent long enough to count as a departure.
+RTC_DATA_ATTR bool rtc_dock_done = false;
 
 static const uint8_t BROADCAST_MAC[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 static const char MAGIC[4] = {'E','N','O','W'};
@@ -1236,7 +1242,7 @@ int WiFiOps::runWardrive(uint32_t currentTime) {
       if (millis() - this->geo_passive_scan_time >= DOCK_SCAN_INTERVAL) {
         this->geo_passive_scan_time = millis();
         //Logger::log(STD_MSG, "Calling scanForTriggerSSID from runWardrive");
-        if (this->scanForTriggerSSID()) {
+        if (!rtc_dock_done && this->scanForTriggerSSID()) {
           Logger::log(STD_MSG, "[DOCK] Trigger SSID found during geofence pause");
           this->dock_state            = DOCK_STATE_CONNECTING;
           this->dock_connect_attempts = 0;
@@ -1274,13 +1280,36 @@ int WiFiOps::runWardrive(uint32_t currentTime) {
         // if we need to switch to dock mode.
         String trigSSID = settings.loadSetting<String>(TRIGGER_SSID_NAME);
         if (!trigSSID.isEmpty()) {
+          bool trig_found = false;
           for (int j = 0; j < scan_status; j++) {
             if (WiFi.SSID(j) == trigSSID) {
-              Logger::log(STD_MSG, "[DOCK] Trigger SSID detected in scan: " + trigSSID);
-              WiFi.scanDelete();
-              this->dock_state            = DOCK_STATE_CONNECTING;
-              this->dock_connect_attempts = 0;
-              return scan_status; // main() will call runDockMode next cycle
+              trig_found = true;
+              break;
+            }
+          }
+
+          if (trig_found && !rtc_dock_done) {
+            Logger::log(STD_MSG, "[DOCK] Trigger SSID detected in scan: " + trigSSID);
+            WiFi.scanDelete();
+            this->dock_state            = DOCK_STATE_CONNECTING;
+            this->dock_connect_attempts = 0;
+            return scan_status; // main() will call runDockMode next cycle
+          }
+
+          if (rtc_dock_done) {
+            if (trig_found) {
+              this->dock_rearm_absent = 0;
+            } else if (currentTime - this->dock_rearm_last_check >= DOCK_SCAN_INTERVAL) {
+              this->dock_rearm_last_check = currentTime;
+              this->dock_rearm_absent++;
+              Logger::log(STD_MSG, "[DOCK] Trigger absent while docked (" +
+                          String(this->dock_rearm_absent) + "/" +
+                          String(DOCK_DEPART_SCANS) + ")");
+              if (this->dock_rearm_absent >= DOCK_DEPART_SCANS) {
+                rtc_dock_done = false;
+                this->dock_rearm_absent = 0;
+                Logger::log(STD_MSG, "[DOCK] Departed — dock re-armed");
+              }
             }
           }
         }
@@ -3001,6 +3030,20 @@ void WiFiOps::showCountdown() {
 
 bool WiFiOps::begin(bool skip_admin) {
   this->current_scan_mode = WIFI_STANDBY;
+
+  esp_reset_reason_t reset_reason = esp_reset_reason();
+  if (reset_reason == ESP_RST_POWERON ||
+      reset_reason == ESP_RST_BROWNOUT ||
+      reset_reason == ESP_RST_UNKNOWN) {
+    rtc_dock_done = false;
+  }
+
+  // Holding SELECT at boot means "resume wardriving" — latch the dock so the
+  // first scan doesn't immediately re-dock on the home/trigger SSID.
+  if (skip_admin) {
+    rtc_dock_done = true;
+  }
+
   this->reserveTlsGuard();
 
   this->run_mode = settings.loadSetting<int>("m");
@@ -3037,6 +3080,7 @@ bool WiFiOps::begin(bool skip_admin) {
         display.tft->println("Syncing pending logs...");
         this->uploadAllPending();
         Logger::log(GUD_MSG, "[DOCK] Boot dock upload complete");
+        rtc_dock_done = true;
 
         // Restore the connect/IP screen after we sync logs.
         display.clearScreen();
@@ -3486,7 +3530,7 @@ void WiFiOps::main(uint32_t currentTime, bool in_sd_files) {
     this->run_mode == SOLO_MODE &&
     !in_sd_files) {
     String trigSSID = settings.loadSetting<String>(TRIGGER_SSID_NAME);
-    if (!trigSSID.isEmpty() &&
+    if (!trigSSID.isEmpty() && !rtc_dock_done &&
       currentTime - this->standby_scan_time >= STANDBY_SCAN_INTERVAL &&
       currentTime - this->dock_depart_time >= 60000) { // 60s cooldown after departing
       this->standby_scan_time = currentTime;
