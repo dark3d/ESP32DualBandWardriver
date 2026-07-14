@@ -1603,7 +1603,7 @@ void WiFiOps::processWardrive(uint16_t networks) {
           display_string.concat(" | Ln: " + gps.getLon());
         }
         else {
-          if (this->gps_buffering_enabled && this->have_last_fix) {
+          if (this->gps_buffering_enabled) {
             String pend = String(millis()) + "," + WiFi.BSSIDstr(i) + "," + ssid + "," +
                           this->security_int_to_string(WiFi.encryptionType(i)) + "," +
                           (String)WiFi.channel(i) + "," + (String)WiFi.RSSI(i) + ",WIFI";
