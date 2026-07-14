@@ -117,6 +117,9 @@ class WiFiOps
     const char* apPassword = "c5wardriver";
 
     WiFiClientSecure *client = new WiFiClientSecure();
+    void *tls_heap_guard = nullptr;
+    void reserveTlsGuard();
+    void freeTlsGuard();
 
     String user_ap_ssid = "";
     String user_ap_password = "";

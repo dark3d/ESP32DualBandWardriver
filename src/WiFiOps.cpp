@@ -1973,10 +1973,13 @@ bool WiFiOps::wigleUpload(String filePath) {
   client->setInsecure();
   client->setTimeout(5000);
 
+  this->freeTlsGuard();
+
   if (!client->connect("api.wigle.net", 443)) {
     fileToUpload.close();
     //delete client;
     client->stop();
+    this->reserveTlsGuard();
     display.clearScreen();
     display.drawCenteredText("Could not connect", true);
     Logger::log(WARN_MSG, "Failed to connected to api.wigle.net");
@@ -2042,11 +2045,12 @@ bool WiFiOps::wigleUpload(String filePath) {
 
   // Read response
   String response;
+  response.reserve(600);
   unsigned long timeout = millis();
   while (millis() - timeout < 5000) {
     while (client->available()) {
       char c = client->read();
-      response += c;
+      if (response.length() < 512) response += c;
     }
 
     delay(10);
@@ -2058,11 +2062,12 @@ bool WiFiOps::wigleUpload(String filePath) {
     Logger::log(WARN_MSG, "Client disconnected");
       
   client->stop();
+  this->reserveTlsGuard();
 
   String respTrunc = response.length() > 200 ? response.substring(0, 200) : response;
   Logger::log(STD_MSG, "[WIGLE] Response: " + respTrunc);
 
-  bool ok = response.indexOf("200 OK") >= 0;
+  bool ok = response.indexOf("200 OK") >= 0 || response.indexOf("409") >= 0;
 
   display.clearScreen();
   display.drawCenteredText(ok ? "WIGLE OK" : "WIGLE Failed", true);
@@ -2138,9 +2143,12 @@ bool WiFiOps::wdgwarsUpload(String filePath) {
   client->setInsecure();
   client->setTimeout(5000);
 
+  this->freeTlsGuard();
+
   if (!client->connect("wdgwars.pl", 443)) {
     fileToUpload.close();
     client->stop();
+    this->reserveTlsGuard();
     display.clearScreen();
     display.drawCenteredText("WDG connect fail", true);
     Logger::log(WARN_MSG, "[WDG] Failed to connect to wdgwars.pl");
@@ -2187,11 +2195,12 @@ bool WiFiOps::wdgwarsUpload(String filePath) {
 
   // Read response
   String response;
+  response.reserve(600);
   unsigned long t = millis();
   while (millis() - t < 5000) {
     while (client->available()) {
       char c = client->read();
-      response += c;
+      if (response.length() < 512) response += c;
     }
     if (!client->connected() && !client->available())
       break;
@@ -2199,6 +2208,7 @@ bool WiFiOps::wdgwarsUpload(String filePath) {
     delay(10);
   }
   client->stop();
+  this->reserveTlsGuard();
 
   // Capture first 200 chars of response for log viewer
   String respTrunc = response.length() > 200 ? response.substring(0, 200) : response;
@@ -2206,7 +2216,8 @@ bool WiFiOps::wdgwarsUpload(String filePath) {
 
   // WDG Wars returns 200 on success
   bool ok = response.indexOf("202 Accepted") >= 0 ||
-  response.indexOf("\"ok\":true") >= 0;
+  response.indexOf("\"ok\":true") >= 0 ||
+  response.indexOf("409") >= 0;
 
   display.clearScreen();
   display.drawCenteredText(ok ? "WDG OK" : "WDG Failed", true);
@@ -2275,8 +2286,26 @@ bool WiFiOps::uploadFile(String filePath, bool retry, uint8_t upload_type) {
 
 // Scan the SD card root for all .log files that are missing at least
 // one service sidecar, and upload them. Used by dock mode (Chunk 6).
+void WiFiOps::reserveTlsGuard() {
+  if (this->tls_heap_guard) return;
+  for (size_t sz = 42 * 1024; sz >= 36 * 1024; sz -= 2 * 1024) {
+    void *p = malloc(sz);
+    if (p) {
+      this->tls_heap_guard = p;
+      return;
+    }
+  }
+}
+
+void WiFiOps::freeTlsGuard() {
+  if (!this->tls_heap_guard) return;
+  free(this->tls_heap_guard);
+  this->tls_heap_guard = nullptr;
+}
+
 void WiFiOps::uploadAllPending() {
   Logger::log(STD_MSG, "[UPLOAD] Scanning SD for pending uploads...");
+  this->reserveTlsGuard();
 
   if (!sd_obj.supported) {
     Logger::log(WARN_MSG, "[UPLOAD] SD not available");
@@ -2292,6 +2321,7 @@ void WiFiOps::uploadAllPending() {
   int uploaded = 0;
   int skipped  = 0;
   int failed   = 0;
+  bool made_progress = false;
 
   File f = root.openNextFile();
   while (f) {
@@ -2315,6 +2345,17 @@ void WiFiOps::uploadAllPending() {
           bool fully_done = (!wigle_needed || wigle_now) && (!wdg_needed || wdg_now);
           if (fully_done) uploaded++;
           else            failed++;
+
+          if ((wigle_needed && wigle_now) || (wdg_needed && wdg_now))
+            made_progress = true;
+
+          if (!this->tls_heap_guard && made_progress) {
+            Logger::log(GUD_MSG, "[UPLOAD] Heap low, rebooting to continue on clean heap");
+            f.close();
+            root.close();
+            delay(300);
+            ESP.restart();
+          }
         }
       }
     }
@@ -2323,6 +2364,7 @@ void WiFiOps::uploadAllPending() {
 
   Logger::log(GUD_MSG, "[UPLOAD] Done. Uploaded:" + String(uploaded) +
               " Skipped:" + String(skipped) + " Failed:" + String(failed));
+  this->freeTlsGuard();
 }
 
 // ============================================================
@@ -2803,6 +2845,7 @@ void WiFiOps::showCountdown() {
 
 bool WiFiOps::begin(bool skip_admin) {
   this->current_scan_mode = WIFI_STANDBY;
+  this->reserveTlsGuard();
 
   this->run_mode = settings.loadSetting<int>("m");
 
@@ -2923,6 +2966,7 @@ bool WiFiOps::begin(bool skip_admin) {
   this->initWiFi();
 
   // Init NimBLE
+  this->freeTlsGuard();
   this->initBLE(); // NimBLE needs to not be init in order to upload to wigle
 
   if (this->run_mode != SOLO_MODE)
@@ -2981,7 +3025,9 @@ bool WiFiOps::scanForTriggerSSID() {
 void WiFiOps::runDockMode(uint32_t currentTime) {
   switch (this->dock_state) {
     case DOCK_STATE_CONNECTING:
-      this->handleDockConnecting();
+      Logger::log(STD_MSG, "[DOCK] Trigger detected, rebooting into upload path");
+      delay(50);
+      ESP.restart();
       break;
     case DOCK_STATE_UPLOADING:
       this->handleDockUploading();
