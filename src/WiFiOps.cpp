@@ -977,7 +977,7 @@ void WiFiOps::OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, i
 
             Logger::log(GUD_MSG, wardrive_line);
 
-            if (gps.getFixStatus()) {
+            if (gps.getFixStatus() && !gps.getDatetime().isEmpty()) {
               // Mark the MAC as logged only once we have a fix and
               // write the record.
               wifi_ops.save_mac(bssid);
@@ -1582,7 +1582,7 @@ void WiFiOps::processWardrive(uint16_t networks) {
         }
 
         if (gps.getFixStatus()) {
-          do_save = true;
+          do_save = !gps.getDatetime().isEmpty();
           display_string.concat(" | Lt: " + gps.getLat());
           display_string.concat(" | Ln: " + gps.getLon());
         }
