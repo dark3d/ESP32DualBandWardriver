@@ -977,7 +977,7 @@ void WiFiOps::OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, i
 
             Logger::log(GUD_MSG, wardrive_line);
 
-            if (gps.getFixStatus()) {
+            if (gps.getFixStatus() && !gps.getDatetime().isEmpty()) {
               // Mark the MAC as logged only once we have a fix and
               // write the record.
               wifi_ops.save_mac(bssid);
@@ -1246,8 +1246,9 @@ int WiFiOps::runWardrive(uint32_t currentTime) {
   if ((this->run_mode == SOLO_MODE) || (this->run_mode == NODE_MODE)) {
 
     // Check GPS status
-    if (((gps.getGpsModuleStatus()) && (gps.getFixStatus()) && (sd_obj.supported)) || 
-        (this->run_mode == NODE_MODE)) {
+    if ((this->run_mode == NODE_MODE) ||
+        (gps.getGpsModuleStatus() && sd_obj.supported &&
+         (gps.getFixStatus() || this->gps_buffering_enabled))) {
 
       scan_status = WiFi.scanComplete();
 
@@ -1409,6 +1410,9 @@ bool WiFiOps::checkGeofences(char* dist_str, size_t dist_str_len) {
   if (!any_valid)
     return false;
 
+  if (!gps.getFixStatus())
+    return false;
+
   float cur_lat = gps.getLat().toFloat();
   float cur_lon = gps.getLon().toFloat();
 
@@ -1517,9 +1521,26 @@ bool WiFiOps::isSSIDExcluded(const String& ssid,
   return false;
 }
 
+void WiFiOps::bufferPendingDetection(const String& line) {
+  File f = SD.open("/pending.csv", FILE_APPEND);
+  if (!f) {
+    Logger::log(WARN_MSG, "[GBUF] Could not open /pending.csv");
+    return;
+  }
+  f.println(line);
+  f.close();
+}
+
 void WiFiOps::processWardrive(uint16_t networks) {
   String display_string;
   bool do_save;
+
+  if (gps.getFixStatus() && !gps.getDatetime().isEmpty()) {
+    this->last_fix_lat    = gps.getLat().toDouble();
+    this->last_fix_lon    = gps.getLon().toDouble();
+    this->last_fix_millis = millis();
+    this->have_last_fix   = true;
+  }
 
   // ---- Chunk 4: load exclusion list once per scan cycle ----
   // Doing this outside the network loop avoids re-parsing the
@@ -1544,8 +1565,6 @@ void WiFiOps::processWardrive(uint16_t networks) {
 
       if (this->seen_mac(this_bssid_raw))
         continue;
-
-      this->save_mac(this_bssid_raw);
 
       if (this->run_mode == SOLO_MODE) {
 
@@ -1579,12 +1598,23 @@ void WiFiOps::processWardrive(uint16_t networks) {
         }
 
         if (gps.getFixStatus()) {
-          do_save = true;
+          do_save = !gps.getDatetime().isEmpty();
           display_string.concat(" | Lt: " + gps.getLat());
           display_string.concat(" | Ln: " + gps.getLon());
         }
         else {
-          display_string.concat(" | GPS: No Fix");
+          if (this->gps_buffering_enabled && this->have_last_fix) {
+            String pend = String(millis()) + "," + WiFi.BSSIDstr(i) + "," + ssid + "," +
+                          this->security_int_to_string(WiFi.encryptionType(i)) + "," +
+                          (String)WiFi.channel(i) + "," + (String)WiFi.RSSI(i) + ",WIFI";
+            this->bufferPendingDetection(pend);
+            this->save_mac(this_bssid_raw);
+            this->pending_count++;
+            display_string.concat(" | GPS: No Fix [BUF:" + String(this->pending_count) + "]");
+          }
+          else {
+            display_string.concat(" | GPS: No Fix");
+          }
         }
 
         int temp_len = display_string.length();
@@ -1605,10 +1635,12 @@ void WiFiOps::processWardrive(uint16_t networks) {
           digitalWrite(LED_PIN, LOW);
 
         if (do_save) {
+          this->save_mac(this_bssid_raw);
           buffer.append(wardrive_line + "\n");
         }
       }
       else if (this->run_mode == NODE_MODE) {
+        this->save_mac(this_bssid_raw);
         String ssid = WiFi.SSID(i);
         ssid.replace(",","_");
 
@@ -2395,6 +2427,7 @@ void WiFiOps::serveConfigPage() {
     String cur_wdg_key     = settings.loadSetting<String>(WDG_KEY_NAME);
     String cur_t_ssid      = settings.loadSetting<String>(TRIGGER_SSID_NAME);
     bool   cur_dbg_en      = settings.loadSetting<bool>(DEBUG_LOG_NAME);
+    bool   cur_gps_buf     = settings.loadSetting<bool>(GPS_BUFFER_NAME);
     int    cur_mode        = settings.loadSetting<int>("m");
     bool   cur_enc         = settings.loadSetting<bool>("e");
 
@@ -2434,6 +2467,10 @@ void WiFiOps::serveConfigPage() {
     html += "<br>SD Debug Log: <input type=\"checkbox\" name=\"dbg_en\" value=\"true\"";
     if (cur_dbg_en) html += " checked";
     html += "> <small>Write all log entries to " + String(DEBUG_LOG_FILE) + " on SD card</small><br>";
+
+    html += "<br>Buffer scans w/o GPS fix: <input type=\"checkbox\" name=\"gps_buf\" value=\"true\"";
+    if (cur_gps_buf) html += " checked";
+    html += "> <small>Log networks seen while GPS has no lock; backfill positions on reacquire (bounded " + String(GPS_BUFFER_WINDOW_S) + "s)</small><br>";
 
     // ---- SSID Exclusions ----
     html += "<h3>SSID Exclusions (up to " + String(MAX_SSID_EXCLUSIONS) + ")</h3>";
@@ -2597,6 +2634,11 @@ void WiFiOps::serveConfigPage() {
     bool dbgEn = server.hasArg("dbg_en") && server.arg("dbg_en") == "true";
     settings.saveSetting<bool>(DEBUG_LOG_NAME, dbgEn);
     Logger::enableSDLog(dbgEn);
+    anyChange = true;
+
+    bool gpsBuf = server.hasArg("gps_buf") && server.arg("gps_buf") == "true";
+    settings.saveSetting<bool>(GPS_BUFFER_NAME, gpsBuf);
+    this->gps_buffering_enabled = gpsBuf;
     anyChange = true;
 
     // SSID exclusions
@@ -2842,6 +2884,7 @@ bool WiFiOps::begin(bool skip_admin) {
   this->reserveTlsGuard();
 
   this->run_mode = settings.loadSetting<int>("m");
+  this->gps_buffering_enabled = settings.loadSetting<bool>(GPS_BUFFER_NAME);
 
   if (!skip_admin) {
     // Init WiFi
