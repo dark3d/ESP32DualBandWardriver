@@ -475,10 +475,15 @@ void GpsInterface::setGPSInfo() {
 
   bool fix = nmea.isValid();
 
-  if ((fix) && (!this->good_fix))
-    Logger::log(GUD_MSG, "GPS acquired fix!");
-  else if ((!fix) && (this->good_fix))
-    Logger::log(WARN_MSG, "GPS lost fix!");
+  if (fix != this->logged_fix) {
+    if (++this->fix_change_count >= GPS_FIX_DEBOUNCE) {
+      this->logged_fix = fix;
+      this->fix_change_count = 0;
+      Logger::log(fix ? GUD_MSG : WARN_MSG, fix ? "GPS acquired fix!" : "GPS lost fix!");
+    }
+  } else {
+    this->fix_change_count = 0;
+  }
 
   this->good_fix = fix;
   this->nav_system = nmea.getNavSystem();
