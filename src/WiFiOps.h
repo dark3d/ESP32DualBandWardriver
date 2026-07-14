@@ -189,6 +189,7 @@ class WiFiOps
     int      dock_connect_attempts = 0;
     uint32_t dock_fail_time        = 0;
     uint32_t dock_last_scan_time   = 0;
+    uint32_t dock_last_ui_time     = 0;
     int      dock_depart_count     = 0;
     uint32_t geo_passive_scan_time = 0; // for geofence-paused trigger scans
     uint32_t standby_scan_time     = 0; // for periodic K1T scan in standby (no GPS)
@@ -199,6 +200,7 @@ class WiFiOps
     void handleDockConnecting();
     void handleDockUploading();
     void handleDockMonitoring(uint32_t currentTime);
+    void drawDockMonitorScreen();
     void departDock();
 
   public:

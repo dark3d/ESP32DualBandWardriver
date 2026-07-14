@@ -3140,6 +3140,9 @@ void WiFiOps::handleDockConnecting() {
     display.tft->println(this->dock_ip);
     display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
     display.tft->println("browse to config");
+    display.tft->println("GPS: " + gps.getFixStatusAsString() + " (" + gps.getNumSatsString() + " sat)");
+    if (battery.i2c_supported)
+      display.tft->println("Batt: " + String(battery.getBatteryLevel()) + "%");
 
     // Start web server so you can access config/files while docked
     this->serveConfigPage();
@@ -3218,11 +3221,33 @@ void WiFiOps::handleDockUploading() {
 // Called every main() cycle while docked.
 // Services web server and runs passive scan every DOCK_SCAN_INTERVAL.
 // Departs when trigger SSID is absent for DOCK_DEPART_SCANS consecutive scans.
+void WiFiOps::drawDockMonitorScreen() {
+  display.clearScreen();
+  display.tft->setCursor(0, 0);
+  display.tft->setTextSize(2);
+  display.tft->setTextColor(ST77XX_GREEN, ST77XX_BLACK);
+  display.tft->println("DOCKED");
+  display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  display.tft->setTextSize(1);
+  display.tft->println(this->dock_ip);
+  display.tft->setTextSize(2);
+  display.tft->println("GPS: " + gps.getFixStatusAsString());
+  display.tft->println("Sat: " + gps.getNumSatsString());
+  if (battery.i2c_supported)
+    display.tft->println("Bat: " + String(battery.getBatteryLevel()) + "%");
+  display.tft->setTextSize(1);
+}
+
 void WiFiOps::handleDockMonitoring(uint32_t currentTime) {
   // Service any web browser clients
   server.handleClient();
   // Keep battery main running so chargeRate sampling fires
   battery.main(currentTime);
+
+  if (currentTime - this->dock_last_ui_time >= DOCK_UI_REFRESH_MS) {
+    this->dock_last_ui_time = currentTime;
+    this->drawDockMonitorScreen();
+  }
 
   // Tier 1 → Tier 2 upgrade: GPS fix acquired while in web-UI-only mode
   if (this->dock_webui_only && gps.getFixStatus() && sd_obj.supported) {
@@ -3244,14 +3269,6 @@ void WiFiOps::handleDockMonitoring(uint32_t currentTime) {
   if (found) {
     Logger::log(STD_MSG, "[DOCK] Trigger SSID still visible — staying docked");
     this->dock_depart_count = 0;
-
-    display.clearScreen();
-    display.tft->setCursor(0, 0);
-    display.tft->setTextColor(ST77XX_GREEN, ST77XX_BLACK);
-    display.tft->println("DOCKED");
-    display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-    display.tft->println(this->dock_ip);
-    display.tft->println("Monitoring...");
 
   } else {
     this->dock_depart_count++;
