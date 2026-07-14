@@ -132,6 +132,7 @@ class WiFiOps
     uint32_t last_fix_millis = 0;
     bool     have_last_fix = false;
     void bufferPendingDetection(const String& line);
+    void backfillPending();
 
     uint8_t current_scan_mode;
     uint32_t init_time;
