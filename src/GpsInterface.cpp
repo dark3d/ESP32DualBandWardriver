@@ -502,7 +502,34 @@ void GpsInterface::setGPSInfo() {
     this->accuracy = 0.0;
   }
 
+  this->updateSnapshot();
+
   //nmea.clear();
+}
+
+void GpsInterface::updateSnapshot() {
+  gps_snapshot_t s;
+
+  strlcpy(s.datetime, this->datetime.c_str(), sizeof(s.datetime));
+  strlcpy(s.lat, this->lat.c_str(), sizeof(s.lat));
+  strlcpy(s.lon, this->lon.c_str(), sizeof(s.lon));
+  s.alt = this->altf;
+  s.accuracy = this->accuracy;
+  s.fix = this->good_fix;
+
+  portENTER_CRITICAL(&this->snapshot_mux);
+  this->snapshot = s;
+  portEXIT_CRITICAL(&this->snapshot_mux);
+}
+
+gps_snapshot_t GpsInterface::getSnapshot() {
+  gps_snapshot_t s;
+
+  portENTER_CRITICAL(&this->snapshot_mux);
+  s = this->snapshot;
+  portEXIT_CRITICAL(&this->snapshot_mux);
+
+  return s;
 }
 
 float GpsInterface::getAccuracy() {

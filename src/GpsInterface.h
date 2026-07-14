@@ -6,6 +6,7 @@
 #include <MicroNMEA.h>
 #include <SoftwareSerial.h>
 #include <LinkedList.h>
+#include <freertos/FreeRTOS.h>
 
 #include "configs.h"
 #include "utils.h"
@@ -34,6 +35,15 @@ struct nmea_sentence_t {
   String sentence;
 };
 
+struct gps_snapshot_t {
+  char datetime[24];
+  char lat[16];
+  char lon[16];
+  float alt;
+  float accuracy;
+  bool fix;
+};
+
 void gps_nmea_notimp(MicroNMEA& nmea);
 
 class GpsInterface {
@@ -51,6 +61,7 @@ class GpsInterface {
     float getAlt();
     float getAccuracy();
     String getDatetime();
+    gps_snapshot_t getSnapshot();
     String getText();
     int getTextQueueSize();
     String getTextQueue(bool flush=1);
@@ -98,7 +109,11 @@ class GpsInterface {
     float altf = 0.0;
     float accuracy = 0.0;
     String datetime = "";
-    
+
+    gps_snapshot_t snapshot = {};
+    portMUX_TYPE snapshot_mux = portMUX_INITIALIZER_UNLOCKED;
+    void updateSnapshot();
+
     bool gps_enabled = false;
     bool good_fix = false;
     bool logged_fix = false;
