@@ -115,8 +115,9 @@
 #define TX_TO_GPS 13
 #define RX_TO_GPS 14
 #define GPS_ACCURACY_UNKNOWN 999.0
-#define GPS_BUFFER_WINDOW_S 90
+#define GPS_BUFFER_WINDOW_S 600
 #define GPS_FIX_DEBOUNCE 5
+#define GPS_BACKFILL_ACC_PER_S 10.0
 
 
 //// SD stuff

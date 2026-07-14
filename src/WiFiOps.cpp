@@ -1521,6 +1521,116 @@ bool WiFiOps::isSSIDExcluded(const String& ssid,
   return false;
 }
 
+static long long gbufDaysFromCivil(int y, int m, int d) {
+  y -= m <= 2;
+  long long era = (y >= 0 ? y : y - 399) / 400;
+  int yoe = (int)(y - era * 400);
+  int doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + doe - 719468;
+}
+
+static long long gbufToEpoch(int y, int mo, int d, int h, int mi, int s) {
+  return gbufDaysFromCivil(y, mo, d) * 86400LL + h * 3600 + mi * 60 + s;
+}
+
+static String gbufEpochToStr(long long t) {
+  long long days = t / 86400;
+  long long rem = t % 86400;
+  if (rem < 0) { rem += 86400; days -= 1; }
+  int h = (int)(rem / 3600), mi = (int)((rem % 3600) / 60), s = (int)(rem % 60);
+  long long z = days + 719468;
+  long long era = (z >= 0 ? z : z - 146096) / 146097;
+  int doe = (int)(z - era * 146097);
+  int yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  int y = yoe + (int)(era * 400);
+  int doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  int mp = (5 * doy + 2) / 153;
+  int d = doy - (153 * mp + 2) / 5 + 1;
+  int mo = mp + (mp < 10 ? 3 : -9);
+  y += (mo <= 2);
+  char buf[24];
+  snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d", y, mo, d, h, mi, s);
+  return String(buf);
+}
+
+void WiFiOps::backfillPending() {
+  if (!SD.exists("/pending.csv")) return;
+
+  int ry, rmo, rd, rh, rmi, rs;
+  if (sscanf(gps.getDatetime().c_str(), "%d-%d-%d %d:%d:%d",
+             &ry, &rmo, &rd, &rh, &rmi, &rs) != 6) return;
+  long long reacq_epoch  = gbufToEpoch(ry, rmo, rd, rh, rmi, rs);
+  uint32_t  reacq_millis = millis();
+  double    lat1 = gps.getLat().toDouble();
+  double    lon1 = gps.getLon().toDouble();
+  String    alt1 = String(gps.getAlt(), 2);
+  uint32_t  window_ms = (uint32_t)GPS_BUFFER_WINDOW_S * 1000;
+  bool bracketed = this->have_last_fix && (reacq_millis - this->last_fix_millis) <= window_ms;
+
+  File in = SD.open("/pending.csv", FILE_READ);
+  if (!in) return;
+
+  int written = 0, dropped = 0;
+  while (in.available()) {
+    String line = in.readStringUntil('\n');
+    line.trim();
+    if (line.isEmpty()) continue;
+
+    int c1 = line.indexOf(',');
+    int c2 = line.indexOf(',', c1 + 1);
+    int c3 = line.indexOf(',', c2 + 1);
+    int c4 = line.indexOf(',', c3 + 1);
+    int c5 = line.indexOf(',', c4 + 1);
+    int c6 = line.indexOf(',', c5 + 1);
+    if (c6 < 0) continue;
+
+    uint32_t rowMillis = (uint32_t)strtoul(line.substring(0, c1).c_str(), NULL, 10);
+    String bssid = line.substring(c1 + 1, c2);
+    String ssid  = line.substring(c2 + 1, c3);
+    String auth  = line.substring(c3 + 1, c4);
+    String ch    = line.substring(c4 + 1, c5);
+    String rssi  = line.substring(c5 + 1, c6);
+    String type  = line.substring(c6 + 1);
+
+    uint32_t age_ms = reacq_millis - rowMillis;
+    if (age_ms > window_ms) { dropped++; continue; }
+    uint32_t age_s = age_ms / 1000;
+
+    String firstSeen = gbufEpochToStr(reacq_epoch - (long long)age_s);
+
+    double lat, lon;
+    uint32_t edge_s;
+    if (bracketed) {
+      double span = (double)(reacq_millis - this->last_fix_millis);
+      double frac = span > 0 ? (double)(rowMillis - this->last_fix_millis) / span : 1.0;
+      if (frac < 0) frac = 0;
+      if (frac > 1) frac = 1;
+      lat = this->last_fix_lat + frac * (lat1 - this->last_fix_lat);
+      lon = this->last_fix_lon + frac * (lon1 - this->last_fix_lon);
+      uint32_t toLast = (rowMillis - this->last_fix_millis) / 1000;
+      edge_s = age_s < toLast ? age_s : toLast;
+    } else {
+      lat = lat1;
+      lon = lon1;
+      edge_s = age_s;
+    }
+    float acc = 5.0 + (float)edge_s * GPS_BACKFILL_ACC_PER_S;
+    if (acc > GPS_ACCURACY_UNKNOWN) acc = GPS_ACCURACY_UNKNOWN;
+
+    String out = bssid + "," + ssid + "," + auth + "," + firstSeen + "," + ch + "," +
+                 rssi + "," + String(lat, 7) + "," + String(lon, 7) + "," + alt1 + "," +
+                 String(acc, 2) + "," + type;
+    buffer.append(out + "\n");
+    written++;
+    if ((written % 20) == 0) delay(1);
+  }
+  in.close();
+  SD.remove("/pending.csv");
+  this->pending_count = 0;
+  Logger::log(GUD_MSG, "[GBUF] Backfilled " + String(written) + ", dropped " + String(dropped));
+}
+
 void WiFiOps::bufferPendingDetection(const String& line) {
   File f = SD.open("/pending.csv", FILE_APPEND);
   if (!f) {
@@ -1536,6 +1646,8 @@ void WiFiOps::processWardrive(uint16_t networks) {
   bool do_save;
 
   if (gps.getFixStatus() && !gps.getDatetime().isEmpty()) {
+    if (this->gps_buffering_enabled)
+      this->backfillPending();
     this->last_fix_lat    = gps.getLat().toDouble();
     this->last_fix_lon    = gps.getLon().toDouble();
     this->last_fix_millis = millis();
