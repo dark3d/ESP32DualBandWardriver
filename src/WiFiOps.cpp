@@ -102,12 +102,14 @@ class scanCallbacks : public NimBLEScanCallbacks {
 
         wifi_ops.setTotalBLECount(wifi_ops.getTotalBLECount() + 1);
 
+        gps_snapshot_t snap = gps.getSnapshot();
+
         bool do_save = false;
 
-        if (gps.getFixStatus())
+        if (snap.fix)
           do_save = true;
 
-        String wardrive_line = (String)advertisedDevice->getAddress().toString().c_str() + ",,[BLE]," + gps.getDatetime() + ",0," + (String)advertisedDevice->getRSSI() + "," + gps.getLat() + "," + gps.getLon() + "," + gps.getAlt() + "," + gps.getAccuracy() + ",BLE";
+        String wardrive_line = (String)advertisedDevice->getAddress().toString().c_str() + ",,[BLE]," + snap.datetime + ",0," + (String)advertisedDevice->getRSSI() + "," + snap.lat + "," + snap.lon + "," + snap.alt + "," + snap.accuracy + ",BLE";
         Logger::log(GUD_MSG, (String)wifi_ops.mac_history_cursor + " | " + wardrive_line);
 
         if (do_save)
@@ -958,6 +960,8 @@ void WiFiOps::OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, i
           utils.convertMacStringToUint8(rec.bssid, bssid);
 
           if (!wifi_ops.seen_mac(bssid)) {
+            gps_snapshot_t snap = gps.getSnapshot();
+
             String type = "WIFI";
             if (rec.type == "B")
               type = "BLE";
@@ -966,18 +970,18 @@ void WiFiOps::OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, i
               rec.bssid + "," +
               rec.essid + "," +
               rec.security + "," +
-              gps.getDatetime() + "," +
+              snap.datetime + "," +
               (String)rec.channel + "," +
               (String)rec.rssi + "," +
-              gps.getLat() + "," +
-              gps.getLon() + "," +
-              gps.getAlt() + "," +
-              gps.getAccuracy() + "," +
+              snap.lat + "," +
+              snap.lon + "," +
+              snap.alt + "," +
+              snap.accuracy + "," +
               type;
 
             Logger::log(GUD_MSG, wardrive_line);
 
-            if (gps.getFixStatus() && !gps.getDatetime().isEmpty()) {
+            if (snap.fix && snap.datetime[0] != '\0') {
               // Mark the MAC as logged only once we have a fix and
               // write the record.
               wifi_ops.save_mac(bssid);
