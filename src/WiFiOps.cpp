@@ -3234,11 +3234,8 @@ void WiFiOps::drawServingScreen() {
   display.tft->setTextColor(ST77XX_GREEN, ST77XX_BLACK);
   display.tft->println("CONFIG");
   display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-  display.tft->setTextSize(1);
   display.tft->println(WiFi.localIP().toString());
-  display.tft->setTextSize(2);
-  display.tft->println("GPS: " + gps.getFixStatusAsString());
-  display.tft->println("Sat: " + gps.getNumSatsString());
+  display.tft->println("GPS:" + String(gps.getFixStatus() ? "Y" : "N") + " Sat:" + gps.getNumSatsString());
   if (battery.i2c_supported)
     display.tft->println("Bat: " + String(battery.getBatteryLevel()) + "%");
   display.tft->setTextSize(1);
@@ -3251,11 +3248,8 @@ void WiFiOps::drawDockMonitorScreen() {
   display.tft->setTextColor(ST77XX_GREEN, ST77XX_BLACK);
   display.tft->println("DOCKED");
   display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-  display.tft->setTextSize(1);
   display.tft->println(this->dock_ip);
-  display.tft->setTextSize(2);
-  display.tft->println("GPS: " + gps.getFixStatusAsString());
-  display.tft->println("Sat: " + gps.getNumSatsString());
+  display.tft->println("GPS:" + String(gps.getFixStatus() ? "Y" : "N") + " Sat:" + gps.getNumSatsString());
   if (battery.i2c_supported)
     display.tft->println("Bat: " + String(battery.getBatteryLevel()) + "%");
   display.tft->setTextSize(1);
