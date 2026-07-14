@@ -101,6 +101,8 @@ class GpsInterface {
     
     bool gps_enabled = false;
     bool good_fix = false;
+    bool logged_fix = false;
+    uint8_t fix_change_count = 0;
     char nav_system='\0';
     uint8_t num_sats = 0;
 

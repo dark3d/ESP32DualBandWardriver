@@ -284,6 +284,7 @@ class WiFiOps
     bool getHasCore();
     bool getSecureReady();
     bool getNodeReady();
+    bool isGpsBufferingEnabled() { return this->gps_buffering_enabled; }
     bool sendEncryptedStringToCore(const String& s);
     bool sendBroadcastStringPlain(const String& s);
     bool parseWardriveLine(const enow_text_msg_t& msg, WardriveRecord& out);
