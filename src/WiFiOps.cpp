@@ -2589,7 +2589,7 @@ void WiFiOps::serveConfigPage() {
 
     html += "<br>Buffer scans w/o GPS fix: <input type=\"checkbox\" name=\"gps_buf\" value=\"true\"";
     if (cur_gps_buf) html += " checked";
-    html += "> <small>Log networks seen while GPS has no lock; backfill positions on reacquire (bounded " + String(GPS_BUFFER_WINDOW_S) + "s)</small><br>";
+    html += "> <small>Log networks seen while GPS has no lock; backfill positions on reacquire (max buffer " + String(GPS_BUFFER_WINDOW_S / 60) + " minutes)</small><br>";
 
     // ---- SSID Exclusions ----
     html += "<h3>SSID Exclusions (up to " + String(MAX_SSID_EXCLUSIONS) + ")</h3>";
@@ -2624,7 +2624,7 @@ void WiFiOps::serveConfigPage() {
       float gRadMiles = gRad > 0 ? gRad / 1609.34 : 0.0;
       char gRadMilesStr[10];
       dtostrf(gRadMiles, 4, 2, gRadMilesStr);
-      html += "Radius (mi, min 0.10, max 1.00): <input type=\"number\" name=\"geo_" + String(i) + "_rad\" value=\"" + String(gRadMilesStr) + "\" min=\"0.10\" max=\"1.00\" step=\"0.05\" style=\"width:70px\"><br>";
+      html += "Radius (mi, 0 = off, else 0.10 to 1.00): <input type=\"number\" name=\"geo_" + String(i) + "_rad\" value=\"" + String(gRadMilesStr) + "\" min=\"0\" max=\"1.00\" step=\"0.05\" style=\"width:70px\"><br>";
 
       html += "&nbsp;&nbsp;Lat: <input type=\"text\" name=\"geo_" + String(i) + "_lat\" value=\"" + String(gLat, 6) + "\" style=\"width:110px\"> ";
       html += "Lon: <input type=\"text\" name=\"geo_" + String(i) + "_lon\" value=\"" + String(gLon, 6) + "\" style=\"width:110px\"><br><br>";
@@ -2780,8 +2780,9 @@ void WiFiOps::serveConfigPage() {
         float  lat   = server.arg(latKey).toFloat();
         float  lon   = server.arg(lonKey).toFloat();
         float radMiles = server.arg(radKey).toFloat();
-        if (radMiles < 0.10) radMiles = 0.10;   // floor at 0.1 mi
-        if (radMiles > 1.00) radMiles = 1.00;   // cap at 1.0 mi
+        if (radMiles <= 0.0) radMiles = 0.0;                        // zone disabled
+        else if (radMiles < 0.10) radMiles = 0.10;                  // floor at 0.1 mi
+        if (radMiles > 1.00) radMiles = 1.00;                       // cap at 1.0 mi
         int rad = (int)(radMiles * 1609.34);     // convert to meters for storage
         String label = server.arg(labelKey);
 
