@@ -660,13 +660,6 @@ void GpsInterface::main() {
     nmea.process(c);
   }
 
-  uint8_t num_sat = nmea.getNumSatellites();
-
-  if ((nmea.isValid()) && (num_sat > 0))
-    this->setGPSInfo();
-
-  else if ((!nmea.isValid()) && (num_sat <= 0)) {
-    this->setGPSInfo();
-  }
+  this->setGPSInfo();
 }
 #endif
