@@ -1548,8 +1548,6 @@ void WiFiOps::processWardrive(uint16_t networks) {
       if (this->seen_mac(this_bssid_raw))
         continue;
 
-      this->save_mac(this_bssid_raw);
-
       if (this->run_mode == SOLO_MODE) {
 
         // ---- Chunk 4: SSID exclusion check ----
@@ -1608,10 +1606,12 @@ void WiFiOps::processWardrive(uint16_t networks) {
           digitalWrite(LED_PIN, LOW);
 
         if (do_save) {
+          this->save_mac(this_bssid_raw);
           buffer.append(wardrive_line + "\n");
         }
       }
       else if (this->run_mode == NODE_MODE) {
+        this->save_mac(this_bssid_raw);
         String ssid = WiFi.SSID(i);
         ssid.replace(",","_");
 
