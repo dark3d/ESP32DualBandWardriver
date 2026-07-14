@@ -2855,6 +2855,12 @@ bool WiFiOps::begin(bool skip_admin) {
       while (this->serving) {
         server.handleClient();
         battery.main(millis());
+        gps.main();
+
+        if (millis() - this->dock_last_ui_time >= DOCK_UI_REFRESH_MS) {
+          this->dock_last_ui_time = millis();
+          this->drawServingScreen();
+        }
 
         // Stay connected until K1T actually disappears — no inactivity
         // timeout when connected as a client to a known WLAN.
@@ -3114,6 +3120,23 @@ void WiFiOps::handleDockUploading() {
 // Called every main() cycle while docked.
 // Services web server and runs passive scan every DOCK_SCAN_INTERVAL.
 // Departs when trigger SSID is absent for DOCK_DEPART_SCANS consecutive scans.
+void WiFiOps::drawServingScreen() {
+  display.clearScreen();
+  display.tft->setCursor(0, 0);
+  display.tft->setTextSize(2);
+  display.tft->setTextColor(ST77XX_GREEN, ST77XX_BLACK);
+  display.tft->println("CONFIG");
+  display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  display.tft->setTextSize(1);
+  display.tft->println(WiFi.localIP().toString());
+  display.tft->setTextSize(2);
+  display.tft->println("GPS: " + gps.getFixStatusAsString());
+  display.tft->println("Sat: " + gps.getNumSatsString());
+  if (battery.i2c_supported)
+    display.tft->println("Bat: " + String(battery.getBatteryLevel()) + "%");
+  display.tft->setTextSize(1);
+}
+
 void WiFiOps::drawDockMonitorScreen() {
   display.clearScreen();
   display.tft->setCursor(0, 0);

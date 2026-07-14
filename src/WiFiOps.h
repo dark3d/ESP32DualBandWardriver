@@ -190,6 +190,7 @@ class WiFiOps
     void handleDockUploading();
     void handleDockMonitoring(uint32_t currentTime);
     void drawDockMonitorScreen();
+    void drawServingScreen();
     void departDock();
 
   public:
