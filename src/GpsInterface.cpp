@@ -454,17 +454,11 @@ String GpsInterface::dt_string_from_gps(){
   //Return a datetime String using GPS data only.
   String datetime = "";
   if (nmea.isValid() && nmea.getYear() > 0){
-    datetime += nmea.getYear();
-    datetime += "-";
-    datetime += nmea.getMonth();
-    datetime += "-";
-    datetime += nmea.getDay();
-    datetime += " ";
-    datetime += nmea.getHour();
-    datetime += ":";
-    datetime += nmea.getMinute();
-    datetime += ":";
-    datetime += nmea.getSecond();
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+             nmea.getYear(), nmea.getMonth(), nmea.getDay(),
+             nmea.getHour(), nmea.getMinute(), nmea.getSecond());
+    datetime = buf;
   }
   return datetime;
 }
