@@ -136,6 +136,7 @@ class WiFiOps
     bool     have_last_fix = false;
     void bufferPendingDetection(const String& line);
     void backfillPending();
+    int  gpsBufferWindowMin();
 
     uint8_t current_scan_mode;
     uint32_t init_time;

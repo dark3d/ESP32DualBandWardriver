@@ -1587,6 +1587,13 @@ static String gbufEpochToStr(long long t) {
   return String(buf);
 }
 
+int WiFiOps::gpsBufferWindowMin() {
+  int w = settings.loadSetting<int>(GPS_BUFFER_WINDOW_NAME);
+  if (w < GPS_BUFFER_WINDOW_MIN_MIN || w > GPS_BUFFER_WINDOW_MIN_MAX)
+    return GPS_BUFFER_WINDOW_DEFAULT_MIN;
+  return w;
+}
+
 void WiFiOps::backfillPending() {
   if (!SD.exists("/pending.csv")) return;
 
@@ -1598,7 +1605,7 @@ void WiFiOps::backfillPending() {
   double    lat1 = gps.getLat().toDouble();
   double    lon1 = gps.getLon().toDouble();
   String    alt1 = String(gps.getAlt(), 2);
-  uint32_t  window_ms = (uint32_t)GPS_BUFFER_WINDOW_S * 1000;
+  uint32_t  window_ms = (uint32_t)this->gpsBufferWindowMin() * 60u * 1000u;
   bool bracketed = this->have_last_fix && (reacq_millis - this->last_fix_millis) <= window_ms;
 
   File in = SD.open("/pending.csv", FILE_READ);
@@ -2576,6 +2583,7 @@ void WiFiOps::serveConfigPage() {
     String cur_t_ssid      = settings.loadSetting<String>(TRIGGER_SSID_NAME);
     bool   cur_dbg_en      = settings.loadSetting<bool>(DEBUG_LOG_NAME);
     bool   cur_gps_buf     = settings.loadSetting<bool>(GPS_BUFFER_NAME);
+    int    cur_gps_buf_win = this->gpsBufferWindowMin();
     int    cur_mode        = settings.loadSetting<int>("m");
     bool   cur_enc         = settings.loadSetting<bool>("e");
 
@@ -2618,7 +2626,8 @@ void WiFiOps::serveConfigPage() {
 
     html += "<br>Buffer scans w/o GPS fix: <input type=\"checkbox\" name=\"gps_buf\" value=\"true\"";
     if (cur_gps_buf) html += " checked";
-    html += "> <small>Log networks seen while GPS has no lock; backfill positions on reacquire (max buffer " + String(GPS_BUFFER_WINDOW_S / 60) + " minutes)</small><br>";
+    html += "> <small>Log networks seen while GPS has no lock; backfill positions on reacquire.</small><br>";
+    html += "&nbsp;&nbsp;Max buffer window (minutes, " + String(GPS_BUFFER_WINDOW_MIN_MIN) + "-" + String(GPS_BUFFER_WINDOW_MIN_MAX) + "): <input type=\"number\" name=\"gps_buf_win\" value=\"" + String(cur_gps_buf_win) + "\" min=\"" + String(GPS_BUFFER_WINDOW_MIN_MIN) + "\" max=\"" + String(GPS_BUFFER_WINDOW_MIN_MAX) + "\" step=\"5\" style=\"width:70px\"><br>";
 
     // ---- SSID Exclusions ----
     html += "<h3>SSID Exclusions (up to " + String(MAX_SSID_EXCLUSIONS) + ")</h3>";
@@ -2788,6 +2797,14 @@ void WiFiOps::serveConfigPage() {
     settings.saveSetting<bool>(GPS_BUFFER_NAME, gpsBuf);
     this->gps_buffering_enabled = gpsBuf;
     anyChange = true;
+
+    if (server.hasArg("gps_buf_win")) {
+      int w = server.arg("gps_buf_win").toInt();
+      if (w < GPS_BUFFER_WINDOW_MIN_MIN) w = GPS_BUFFER_WINDOW_MIN_MIN;
+      if (w > GPS_BUFFER_WINDOW_MIN_MAX) w = GPS_BUFFER_WINDOW_MIN_MAX;
+      settings.saveSetting<bool>(GPS_BUFFER_WINDOW_NAME, w, true);
+      anyChange = true;
+    }
 
     // SSID exclusions
     for (int i = 0; i < MAX_SSID_EXCLUSIONS; i++) {
