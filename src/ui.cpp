@@ -511,6 +511,16 @@ void UI::drawStatsNew(uint32_t currentTime, uint32_t count2g4, uint32_t count5g,
   }
 
   if (wifi_ops.run_mode == CORE_MODE) {
+    display.tft->setCursor(0, 80 - 9);
+    display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    display.tft->print("Aircraft: ");
+    display.tft->setTextColor(ST77XX_GREEN, ST77XX_BLACK);
+    display.tft->print(String(wifi_ops.aircraftCount()));
+    display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    display.tft->print("/");
+    display.tft->setTextColor(0xF81F, ST77XX_BLACK);
+    display.tft->print(String(wifi_ops.aircraftSessionTotal()));
+
     String node_num = "Nodes: " + String(wifi_ops.getNodeCount());
     display.tft->setCursor(TFT_WIDTH - node_num.length() * 6, 80 - 9);
     display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
