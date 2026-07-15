@@ -56,6 +56,8 @@ struct GeofenceEntry {
 #define NODE_TIMEOUT_MS 60000
 #define MAX_AIRCRAFT 64
 #define AIRCRAFT_TIMEOUT_MS UI_UPDATE_TIME
+#define AIRCRAFT_SD_WRITE_MS 10000
+#define AIRCRAFT_PENDING_FILE "/aircraft-pending.csv"
 #define ADMIN_WAIT_MS 300
 #define DEBUG_OUTPUT_DELAY 30000
 
@@ -95,7 +97,14 @@ typedef struct __attribute__((packed)) {
 
 struct AircraftRecord {
   uint32_t icao;
+  char     flight[9];
+  float    lat;
+  float    lon;
+  int32_t  alt_baro;
+  uint16_t gs;
+  uint16_t track;
   uint32_t last_seen_ms;
+  uint32_t last_written_ms;
   bool     used;
 };
 
@@ -180,7 +189,7 @@ class WiFiOps
     bool removeStaleNodes();
     void recalculateChannelAssignments();
     int touchNode(const uint8_t* mac, bool& isNewNode);
-    void touchAircraft(uint32_t icao, uint32_t now);
+    void touchAircraft(const enow_aircraft_msg_t* a, uint32_t now);
     uint8_t getNodeStartChannel(uint8_t slot);
     uint8_t getNodeEndChannel(uint8_t slot);
     uint8_t getActiveNodeCount();
@@ -248,6 +257,7 @@ class WiFiOps
     uint8_t getNodeCount() { return getActiveNodeCount(); }
     int aircraftCount();
     uint32_t aircraftSessionTotal();
+    void flushAircraftBuffer(uint32_t now);
 
     uint8_t current_assignment_version = 1;
     uint8_t current_assigned_scan_idx = 0;

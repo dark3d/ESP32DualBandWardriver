@@ -532,23 +532,29 @@ uint8_t WiFiOps::getActiveNodeCount() {
   return count;
 }
 
-void WiFiOps::touchAircraft(uint32_t icao, uint32_t now) {
+void WiFiOps::touchAircraft(const enow_aircraft_msg_t* a, uint32_t now) {
   portENTER_CRITICAL(&aircraft_mux);
-  int free_slot = -1;
+  int slot = -1, free_slot = -1;
   for (int i = 0; i < MAX_AIRCRAFT; i++) {
-    if (aircraft_table[i].used && aircraft_table[i].icao == icao) {
-      aircraft_table[i].last_seen_ms = now;
-      portEXIT_CRITICAL(&aircraft_mux);
-      return;
-    }
+    if (aircraft_table[i].used && aircraft_table[i].icao == a->icao) { slot = i; break; }
     if (!aircraft_table[i].used && free_slot < 0) free_slot = i;
   }
-  if (free_slot >= 0) {
-    aircraft_table[free_slot].used = true;
-    aircraft_table[free_slot].icao = icao;
-    aircraft_table[free_slot].last_seen_ms = now;
+  if (slot < 0) {
+    if (free_slot < 0) { portEXIT_CRITICAL(&aircraft_mux); return; }
+    slot = free_slot;
+    aircraft_table[slot].used = true;
+    aircraft_table[slot].icao = a->icao;
+    aircraft_table[slot].last_written_ms = 0;
     aircraft_session_total++;
   }
+  memcpy(aircraft_table[slot].flight, a->callsign, 8);
+  aircraft_table[slot].flight[8] = '\0';
+  aircraft_table[slot].lat = a->lat;
+  aircraft_table[slot].lon = a->lon;
+  aircraft_table[slot].alt_baro = a->altitude_ft;
+  aircraft_table[slot].gs = a->ground_speed_kt;
+  aircraft_table[slot].track = a->track_deg;
+  aircraft_table[slot].last_seen_ms = now;
   portEXIT_CRITICAL(&aircraft_mux);
 }
 
@@ -559,17 +565,49 @@ uint32_t WiFiOps::aircraftSessionTotal() {
   return t;
 }
 
+void WiFiOps::flushAircraftBuffer(uint32_t now) {
+  for (int i = 0; i < MAX_AIRCRAFT; i++) {
+    bool do_write = false, do_evict = false;
+    AircraftRecord rec;
+    portENTER_CRITICAL(&aircraft_mux);
+    if (aircraft_table[i].used) {
+      if (aircraft_table[i].last_written_ms == 0 ||
+          now - aircraft_table[i].last_written_ms >= AIRCRAFT_SD_WRITE_MS) {
+        rec = aircraft_table[i];
+        aircraft_table[i].last_written_ms = now;
+        do_write = true;
+      }
+      if (aircraft_table[i].last_written_ms != 0 &&
+          now - aircraft_table[i].last_seen_ms > AIRCRAFT_TIMEOUT_MS) {
+        do_evict = true;
+      }
+    }
+    portEXIT_CRITICAL(&aircraft_mux);
+
+    if (do_write && sd_obj.supported) {
+      File f = SD.open(AIRCRAFT_PENDING_FILE, FILE_APPEND);
+      if (f) {
+        f.printf("%06lx,%s,%.6f,%.6f,%ld,%u,%u\n",
+                 (unsigned long)rec.icao, rec.flight, rec.lat, rec.lon,
+                 (long)rec.alt_baro, rec.gs, rec.track);
+        f.close();
+      }
+    }
+    if (do_evict) {
+      portENTER_CRITICAL(&aircraft_mux);
+      aircraft_table[i].used = false;
+      portEXIT_CRITICAL(&aircraft_mux);
+    }
+  }
+}
+
 int WiFiOps::aircraftCount() {
   uint32_t now = millis();
   int n = 0;
   portENTER_CRITICAL(&aircraft_mux);
   for (int i = 0; i < MAX_AIRCRAFT; i++) {
     if (!aircraft_table[i].used) continue;
-    if (now - aircraft_table[i].last_seen_ms > AIRCRAFT_TIMEOUT_MS) {
-      aircraft_table[i].used = false;
-      continue;
-    }
-    n++;
+    if (now - aircraft_table[i].last_seen_ms <= AIRCRAFT_TIMEOUT_MS) n++;
   }
   portEXIT_CRITICAL(&aircraft_mux);
   return n;
@@ -1087,7 +1125,7 @@ void WiFiOps::OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, i
     if (msgType == MSG_AIRCRAFT) {
       if (len < (int)sizeof(enow_aircraft_msg_t)) return;
       const enow_aircraft_msg_t* a = (const enow_aircraft_msg_t*)data;
-      wifi_ops.touchAircraft(a->icao, millis());
+      wifi_ops.touchAircraft(a, millis());
       return;
     }
 
@@ -3626,5 +3664,6 @@ void WiFiOps::main(uint32_t currentTime, bool in_sd_files) {
     if (this->removeStaleNodes()) {
       this->handleNodeTopologyChange();
     }
+    this->flushAircraftBuffer(currentTime);
   }
 }
