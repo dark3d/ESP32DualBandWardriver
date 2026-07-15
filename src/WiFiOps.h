@@ -54,6 +54,8 @@ struct GeofenceEntry {
 
 #define MAX_NODES 24
 #define NODE_TIMEOUT_MS 60000
+#define MAX_AIRCRAFT 64
+#define AIRCRAFT_TIMEOUT_MS UI_UPDATE_TIME
 #define ADMIN_WAIT_MS 300
 #define DEBUG_OUTPUT_DELAY 30000
 
@@ -78,6 +80,24 @@ typedef struct __attribute__((packed)) {
   uint8_t start_channel_idx;
   uint8_t end_channel_idx;
 } enow_admin_msg_t;
+
+typedef struct __attribute__((packed)) {
+  char     magic[4];
+  uint8_t  type;
+  uint32_t icao;
+  char     callsign[8];
+  int32_t  altitude_ft;
+  float    lat;
+  float    lon;
+  uint16_t ground_speed_kt;
+  uint16_t track_deg;
+} enow_aircraft_msg_t;
+
+struct AircraftRecord {
+  uint32_t icao;
+  uint32_t last_seen_ms;
+  bool     used;
+};
 
 struct WardriveRecord {
   String bssid;
@@ -160,6 +180,7 @@ class WiFiOps
     bool removeStaleNodes();
     void recalculateChannelAssignments();
     int touchNode(const uint8_t* mac, bool& isNewNode);
+    void touchAircraft(uint32_t icao, uint32_t now);
     uint8_t getNodeStartChannel(uint8_t slot);
     uint8_t getNodeEndChannel(uint8_t slot);
     uint8_t getActiveNodeCount();
@@ -225,6 +246,8 @@ class WiFiOps
     bool use_encryption = false;
     bool isDocked() { return dock_state != DOCK_STATE_NONE; }
     uint8_t getNodeCount() { return getActiveNodeCount(); }
+    int aircraftCount();
+    uint32_t aircraftSessionTotal();
 
     uint8_t current_assignment_version = 1;
     uint8_t current_assigned_scan_idx = 0;
@@ -244,7 +267,7 @@ class WiFiOps
     // --------------------------------------------------------
     String dock_ip = ""; // IP address shown on TFT while docked
 
-    bool begin(bool skip_admin = false);
+    bool begin(bool skip_admin = false, int mode_override = 0);
     void main(uint32_t currentTime, bool in_sd_files = false);
     void startLog(String file_name);
     void initBLE();

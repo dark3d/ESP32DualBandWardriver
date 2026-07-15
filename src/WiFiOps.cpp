@@ -76,12 +76,17 @@ uint8_t lmk[16];
 
 NodeRecord node_table[MAX_NODES];
 
+AircraftRecord aircraft_table[MAX_AIRCRAFT];
+portMUX_TYPE aircraft_mux = portMUX_INITIALIZER_UNLOCKED;
+uint32_t aircraft_session_total = 0;
+
 enum MsgType : uint8_t {
   MSG_CORE_REQUEST   = 1,
   MSG_CORE_REPLY     = 2,
   MSG_HEARTBEAT      = 3,
   MSG_TEXT           = 4,
-  MSG_ADMIN          = 5
+  MSG_ADMIN          = 5,
+  MSG_AIRCRAFT       = 6
 };
 
 WebServer server(80);
@@ -525,6 +530,49 @@ uint8_t WiFiOps::getActiveNodeCount() {
   }
 
   return count;
+}
+
+void WiFiOps::touchAircraft(uint32_t icao, uint32_t now) {
+  portENTER_CRITICAL(&aircraft_mux);
+  int free_slot = -1;
+  for (int i = 0; i < MAX_AIRCRAFT; i++) {
+    if (aircraft_table[i].used && aircraft_table[i].icao == icao) {
+      aircraft_table[i].last_seen_ms = now;
+      portEXIT_CRITICAL(&aircraft_mux);
+      return;
+    }
+    if (!aircraft_table[i].used && free_slot < 0) free_slot = i;
+  }
+  if (free_slot >= 0) {
+    aircraft_table[free_slot].used = true;
+    aircraft_table[free_slot].icao = icao;
+    aircraft_table[free_slot].last_seen_ms = now;
+    aircraft_session_total++;
+  }
+  portEXIT_CRITICAL(&aircraft_mux);
+}
+
+uint32_t WiFiOps::aircraftSessionTotal() {
+  portENTER_CRITICAL(&aircraft_mux);
+  uint32_t t = aircraft_session_total;
+  portEXIT_CRITICAL(&aircraft_mux);
+  return t;
+}
+
+int WiFiOps::aircraftCount() {
+  uint32_t now = millis();
+  int n = 0;
+  portENTER_CRITICAL(&aircraft_mux);
+  for (int i = 0; i < MAX_AIRCRAFT; i++) {
+    if (!aircraft_table[i].used) continue;
+    if (now - aircraft_table[i].last_seen_ms > AIRCRAFT_TIMEOUT_MS) {
+      aircraft_table[i].used = false;
+      continue;
+    }
+    n++;
+  }
+  portEXIT_CRITICAL(&aircraft_mux);
+  return n;
 }
 
 void WiFiOps::markAllActiveNodesAdminDirty() {
@@ -1033,6 +1081,13 @@ void WiFiOps::OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, i
       //}
 
       // Do NOT send admin here; wait for heartbeat/check-in window
+      return;
+    }
+
+    if (msgType == MSG_AIRCRAFT) {
+      if (len < (int)sizeof(enow_aircraft_msg_t)) return;
+      const enow_aircraft_msg_t* a = (const enow_aircraft_msg_t*)data;
+      wifi_ops.touchAircraft(a->icao, millis());
       return;
     }
 
@@ -3045,7 +3100,7 @@ void WiFiOps::showCountdown() {
   }
 }
 
-bool WiFiOps::begin(bool skip_admin) {
+bool WiFiOps::begin(bool skip_admin, int mode_override) {
   this->current_scan_mode = WIFI_STANDBY;
 
   esp_reset_reason_t reset_reason = esp_reset_reason();
@@ -3064,6 +3119,7 @@ bool WiFiOps::begin(bool skip_admin) {
   this->reserveTlsGuard();
 
   this->run_mode = settings.loadSetting<int>("m");
+  if (mode_override != 0) this->run_mode = mode_override;
   this->gps_buffering_enabled = settings.loadSetting<bool>(GPS_BUFFER_NAME);
 
   if (!skip_admin) {

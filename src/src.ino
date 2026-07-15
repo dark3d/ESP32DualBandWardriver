@@ -88,7 +88,10 @@ void setup() {
   ui_obj.begin();
 
   // Init wifi and bluetooth
-  wifi_ops.begin(c_btn.justPressed());
+  int mode_override = 0;
+  if (d_btn.justPressed()) mode_override = CORE_MODE;
+  else if (u_btn.justPressed()) mode_override = SOLO_MODE;
+  wifi_ops.begin(c_btn.justPressed() || mode_override != 0, mode_override);
 
   // Init UI
   ui_obj.begin();
