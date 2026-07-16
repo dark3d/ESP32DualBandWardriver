@@ -2625,7 +2625,25 @@ void WiFiOps::uploadAllPendingV2() {
     [this](const String& path, const char* tag){ this->writeSidecar(path, tag); });
 
   mgr.begin();
+  display.clearScreen();
+  display.tft->setTextSize(1);
+  display.tft->setTextColor(ST77XX_CYAN, ST77XX_BLACK);
+  display.tft->setCursor(0, 0);
+  display.tft->print("== DOCK UPLOAD ==");
   while (mgr.runNext(millis())) {
+    UploadManager::Stats ss = mgr.stats();
+    display.tft->fillRect(0, 10, TFT_WIDTH, 40, ST77XX_BLACK);
+    display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    display.tft->setCursor(0, 12);
+    display.tft->print(String(mgr.lastService()) + " " + mgr.lastStage());
+    display.tft->setCursor(0, 24);
+    String fn = String(mgr.lastFile()); if (fn.startsWith("/")) fn = fn.substring(1);
+    if (fn.length() > 26) fn = fn.substring(0, 26);
+    display.tft->print(fn);
+    display.tft->setTextColor(ST77XX_GREEN, ST77XX_BLACK);
+    display.tft->setCursor(0, 40);
+    display.tft->print("OK " + String(ss.ok) + " Fail " + String(ss.failed) +
+                       " Left " + String(ss.pending));
     if (!this->tls_heap_guard && mgr.stats().ok >= 3) {
       Logger::log(GUD_MSG, "[UPLOAD] Heap low after " + String(mgr.stats().ok) + " uploads, rebooting to continue");
       delay(300);
