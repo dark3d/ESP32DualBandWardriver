@@ -76,7 +76,7 @@ uint8_t lmk[16];
 
 NodeRecord node_table[MAX_NODES];
 
-AircraftRecord aircraft_table[MAX_AIRCRAFT];
+AircraftRecord* aircraft_table = nullptr;
 portMUX_TYPE aircraft_mux = portMUX_INITIALIZER_UNLOCKED;
 uint32_t aircraft_session_total = 0;
 
@@ -533,6 +533,7 @@ uint8_t WiFiOps::getActiveNodeCount() {
 }
 
 void WiFiOps::touchAircraft(const enow_aircraft_msg_t* a, uint32_t now) {
+  if (!aircraft_table) return;
   portENTER_CRITICAL(&aircraft_mux);
   int slot = -1, free_slot = -1;
   for (int i = 0; i < MAX_AIRCRAFT; i++) {
@@ -566,6 +567,7 @@ uint32_t WiFiOps::aircraftSessionTotal() {
 }
 
 void WiFiOps::flushAircraftBuffer(uint32_t now) {
+  if (!aircraft_table) return;
   for (int i = 0; i < MAX_AIRCRAFT; i++) {
     bool do_write = false, do_evict = false;
     AircraftRecord rec;
@@ -602,6 +604,7 @@ void WiFiOps::flushAircraftBuffer(uint32_t now) {
 }
 
 int WiFiOps::aircraftCount() {
+  if (!aircraft_table) return 0;
   uint32_t now = millis();
   int n = 0;
   portENTER_CRITICAL(&aircraft_mux);
@@ -1195,6 +1198,12 @@ void WiFiOps::OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, i
 void WiFiOps::startESPNow() {
   this->setFixedChannel(ESPNOW_CHANNEL);
   this->computeKeysFromEnowKey();
+
+  if (this->run_mode == CORE_MODE && !aircraft_table) {
+    aircraft_table = (AircraftRecord*)calloc(MAX_AIRCRAFT, sizeof(AircraftRecord));
+    if (!aircraft_table)
+      Logger::log(WARN_MSG, "Failed to allocate aircraft table");
+  }
 
   if (esp_now_init() != ESP_OK) {
     Logger::log(WARN_MSG, "ESP-NOW init failed");
@@ -2136,6 +2145,11 @@ bool WiFiOps::tryConnectToWiFi(unsigned long timeoutMs) {
 
   // Connect to WiFi with AP credentials
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.setBandMode(WIFI_BAND_MODE_2G_ONLY);
+  esp_wifi_set_protocol(WIFI_IF_STA,
+      WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.begin(this->user_ap_ssid.c_str(), this->user_ap_password.c_str());
 
   // Wait while we connect
@@ -2147,6 +2161,9 @@ bool WiFiOps::tryConnectToWiFi(unsigned long timeoutMs) {
 
   // Output status of connection attempt
   if (WiFi.status() == WL_CONNECTED) {
+    WiFi.setSleep(false);
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    WiFi.setTxPower(WIFI_POWER_19_5dBm);
     display.clearScreen();
     display.tft->setCursor(0, 0);
     display.tft->print("Connected: ");
@@ -2279,7 +2296,7 @@ bool WiFiOps::wigleUpload(String filePath) {
 
   // Send body
   client->print(part1);
-  const size_t BUFFER_SIZE = 4096; // 1KB at a time
+  const size_t BUFFER_SIZE = 512;
   uint8_t buffer[BUFFER_SIZE];
 
   Serial.println("Finished sending part1");
@@ -2440,7 +2457,7 @@ bool WiFiOps::wdgwarsUpload(String filePath) {
   // Send body
   client->print(part1);
 
-  const size_t CHUNK = 4096;
+  const size_t CHUNK = 512;
   uint8_t buf[CHUNK];
   size_t totalSent = 0;
   uint8_t pct = 0;
@@ -2572,6 +2589,55 @@ void WiFiOps::freeTlsGuard() {
   if (!this->tls_heap_guard) return;
   free(this->tls_heap_guard);
   this->tls_heap_guard = nullptr;
+}
+
+void WiFiOps::uploadAllPendingV2() {
+  if (!sd_obj.supported) { Logger::log(WARN_MSG, "[UPLOAD] SD not available"); return; }
+  this->reserveTlsGuard();
+
+  UploadManager mgr;
+  mgr.addService(UploadService{
+    "wigle", "wigle", 0, 300000,
+    [this](const String& path){
+      return this->wigleUpload(path) ? UploadResult::Success : UploadResult::Throttled;
+    }});
+  mgr.addService(UploadService{
+    "wdg", "wdg", 0, 300000,
+    [this](const String& path){
+      return this->wdgwarsUpload(path) ? UploadResult::Success : UploadResult::Throttled;
+    }});
+
+  mgr.setScan(
+    [](std::vector<String>& out){
+      File root = SD.open("/");
+      if (!root || !root.isDirectory()) return;
+      File f = root.openNextFile();
+      while (f) {
+        if (!f.isDirectory()) {
+          String n = f.name();
+          if (n.endsWith(".log") && n != "debug.log") out.push_back("/" + n);
+        }
+        f = root.openNextFile();
+      }
+      root.close();
+    },
+    [this](const String& path, const char* tag){ return this->sidecarExists(path, tag); },
+    [this](const String& path, const char* tag){ this->writeSidecar(path, tag); });
+
+  mgr.begin();
+  while (mgr.runNext(millis())) {
+    if (!this->tls_heap_guard && mgr.stats().ok >= 3) {
+      Logger::log(GUD_MSG, "[UPLOAD] Heap low after " + String(mgr.stats().ok) + " uploads, rebooting to continue");
+      delay(300);
+      ESP.restart();
+    }
+  }
+
+  UploadManager::Stats st = mgr.stats();
+  Logger::log(GUD_MSG, "[UPLOAD] V2 done. OK:" + String(st.ok) + " Failed:" +
+              String(st.failed) + " Skipped:" + String(st.skipped) +
+              " Pending(backoff):" + String(st.pending));
+  this->freeTlsGuard();
 }
 
 void WiFiOps::uploadAllPending() {
@@ -3189,7 +3255,7 @@ bool WiFiOps::begin(bool skip_admin, int mode_override) {
         display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
         display.tft->setTextSize(1);
         display.tft->println("Syncing pending logs...");
-        this->uploadAllPending();
+        this->uploadAllPendingV2();
         Logger::log(GUD_MSG, "[DOCK] Boot dock upload complete");
         rtc_dock_done = true;
 
@@ -3398,6 +3464,11 @@ void WiFiOps::handleDockConnecting() {
   this->initWiFi();
 
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.setBandMode(WIFI_BAND_MODE_2G_ONLY);
+  esp_wifi_set_protocol(WIFI_IF_STA,
+      WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.begin(trigSSID.c_str(), trigPass.c_str());
 
   unsigned long start = millis();

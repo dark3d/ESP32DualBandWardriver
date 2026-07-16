@@ -18,6 +18,7 @@
 #include <HTTPClient.h>
 #include <SPIFFS.h>
 #include <ArduinoJson.h>
+#include "UploadManager.h"
 #include "esp_wifi.h"
 #include "esp_wifi_types.h"
 #include "mbedtls/sha256.h"
@@ -301,6 +302,7 @@ class WiFiOps
                     bool retry = false,
                     uint8_t upload_type = WIGLE_UPLOAD);       // upload to both services (sidecar-aware)
     void uploadAllPending();                   // scan SD and upload all files missing sidecars
+    void uploadAllPendingV2();                 // strangler: drive UploadManager (per-service backoff)
     void setCurrentScanMode(uint8_t scan_mode);
     uint8_t getCurrentScanMode();
     void setTotalNetCount(uint32_t count);
