@@ -2299,6 +2299,7 @@ bool WiFiOps::wigleUpload(String filePath) {
   Serial.println("Finished sending part1");
 
   uint8_t percent_sent = 0;
+  int wpb_last = -1;
 
   String display_percent = "";
 
@@ -2311,6 +2312,12 @@ bool WiFiOps::wigleUpload(String filePath) {
     Serial.println(" bytes...");
     percent_sent = (totalBytesSent * 100) / fileToUpload.size();
     client->write(buffer, bytesRead);
+    if ((int)percent_sent != wpb_last) { wpb_last = percent_sent;
+      int wpb=percent_sent, wpbw=TFT_WIDTH-4, wpbf=((wpbw-2)*wpb)/100;
+      display.tft->drawRect(2,54,wpbw,10,ST77XX_WHITE);
+      display.tft->fillRect(3,55,wpbf,8,ST77XX_GREEN);
+      display.tft->fillRect(3+wpbf,55,(wpbw-2)-wpbf,8,ST77XX_BLACK);
+    }
   }
 
   Logger::log(STD_MSG, "Uploaded file bytes: " + String(totalBytesSent));
@@ -2450,6 +2457,7 @@ bool WiFiOps::wdgwarsUpload(String filePath) {
   uint8_t buf[CHUNK];
   size_t totalSent = 0;
   uint8_t pct = 0;
+  int wpb_last = -1;
   String pctStr;
 
   while (fileToUpload.available()) {
@@ -2457,6 +2465,12 @@ bool WiFiOps::wdgwarsUpload(String filePath) {
     totalSent += n;
     client->write(buf, n);
     pct = (totalSent * 100) / fileToUpload.size();
+    if ((int)pct != wpb_last) { wpb_last = pct;
+      int wpb=pct, wpbw=TFT_WIDTH-4, wpbf=((wpbw-2)*wpb)/100;
+      display.tft->drawRect(2,54,wpbw,10,ST77XX_WHITE);
+      display.tft->fillRect(3,55,wpbf,8,ST77XX_GREEN);
+      display.tft->fillRect(3+wpbf,55,(wpbw-2)-wpbf,8,ST77XX_BLACK);
+    }
   }
 
   client->print(part2);
