@@ -2197,9 +2197,6 @@ void WiFiOps::startAccessPoint() {
 bool WiFiOps::wigleUpload(String filePath) {
   //server.begin();
 
-  display.clearScreen();
-  display.drawCenteredText("Wigle Upload...", true);
-
   delay(100);
 
   if (!SD.exists(filePath)) {
@@ -2313,10 +2310,6 @@ bool WiFiOps::wigleUpload(String filePath) {
     Serial.print(totalBytesSent);
     Serial.println(" bytes...");
     percent_sent = (totalBytesSent * 100) / fileToUpload.size();
-    display.tft->drawRect(0, (TFT_HEIGHT / 3) * 2, TFT_WIDTH, TFT_HEIGHT, ST77XX_BLACK);
-    display.tft->setCursor(0, (TFT_HEIGHT / 3) * 2);
-    display_percent = (String)percent_sent + "%";
-    display.drawCenteredText(display_percent, false);
     client->write(buffer, bytesRead);
   }
 
@@ -2357,8 +2350,6 @@ bool WiFiOps::wigleUpload(String filePath) {
 
   bool ok = response.indexOf("200 OK") >= 0 || response.indexOf("409") >= 0;
 
-  display.clearScreen();
-  display.drawCenteredText(ok ? "WIGLE OK" : "WIGLE Failed", true);
 
   return ok;
 }
@@ -2390,8 +2381,6 @@ void WiFiOps::writeSidecar(String filePath, String service) {
 // Upload one log file to WDG Wars.
 // Mirrors backendUpload() but uses X-API-Key auth and wdgwars.pl endpoint.
 bool WiFiOps::wdgwarsUpload(String filePath) {
-  display.clearScreen();
-  display.drawCenteredText("WDG Upload...", true);
   delay(100);
 
   if (!SD.exists(filePath)) {
@@ -2468,11 +2457,6 @@ bool WiFiOps::wdgwarsUpload(String filePath) {
     totalSent += n;
     client->write(buf, n);
     pct = (totalSent * 100) / fileToUpload.size();
-    display.tft->drawRect(0, (TFT_HEIGHT / 3) * 2, TFT_WIDTH,
-                          TFT_HEIGHT - (TFT_HEIGHT / 3) * 2, ST77XX_BLACK);
-    display.tft->setCursor(0, (TFT_HEIGHT / 3) * 2);
-    pctStr = String(pct) + "%";
-    display.drawCenteredText(pctStr, false);
   }
 
   client->print(part2);
@@ -2507,9 +2491,6 @@ bool WiFiOps::wdgwarsUpload(String filePath) {
   response.indexOf("\"ok\":true") >= 0 ||
   response.indexOf("409") >= 0;
 
-  display.clearScreen();
-  display.drawCenteredText(ok ? "WDG OK" : "WDG Failed", true);
-  delay(1000);
 
   return ok;
 }
@@ -2519,10 +2500,6 @@ bool WiFiOps::wdgwarsUpload(String filePath) {
 // Writes sidecar for each service that succeeds.
 // Returns true only if both uploads succeed (or were already done).
 bool WiFiOps::uploadFile(String filePath, bool retry, uint8_t upload_type) {
-  display.clearScreen();
-  display.drawCenteredText("Uploading " + filePath, true);
-  delay(1000);
-  
   Logger::log(STD_MSG, "[UPLOAD] uploadFile: " + filePath +
               (retry ? " (retry)" : ""));
 
