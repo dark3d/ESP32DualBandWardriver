@@ -159,6 +159,7 @@ class WiFiOps
     bool connected_as_client = false;
 
     bool     gps_buffering_enabled = false;
+    bool     sim_no_fix = false;
     uint32_t pending_count = 0;
     double   last_fix_lat = 0.0;
     double   last_fix_lon = 0.0;
@@ -328,6 +329,10 @@ class WiFiOps
     bool getNodeReady();
     bool isGpsBufferingEnabled() { return this->gps_buffering_enabled; }
     uint32_t getPendingCount() { return this->pending_count; }
+    void bufferBleDetection(const String& address, int rssi);
+    bool effectiveFix();                 // real GPS fix AND not simulating a loss
+    void toggleSimNoFix();               // diagnostic: fake a GPS outage for buffering tests
+    bool getSimNoFix() { return this->sim_no_fix; }
     bool sendEncryptedStringToCore(const String& s);
     bool sendBroadcastStringPlain(const String& s);
     bool parseWardriveLine(const enow_text_msg_t& msg, WardriveRecord& out);

@@ -116,6 +116,13 @@ void setup() {
 }
 
 void loop() {
+  // Diagnostic: send 'b' over serial to toggle a simulated GPS outage (buffering
+  // test without unplugging the antenna). Sending 'g' forces it off.
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == 'b') wifi_ops.toggleSimNoFix();
+  }
+
   // Take current time of this loop for functions
   uint32_t currentTime = millis();
 

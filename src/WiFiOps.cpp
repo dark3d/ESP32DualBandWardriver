@@ -100,8 +100,13 @@ class scanCallbacks : public NimBLEScanCallbacks {
     uint8_t macBytes[6];
 
     if (wifi_ops.run_mode == SOLO_MODE) {
-      if ((gps.getGpsModuleStatus()) && (gps.getFixStatus()) && (sd_obj.supported)) {
-        
+      // Only a fix WITH a timestamp can be stamped live; otherwise buffer (so a
+      // fix-but-no-datetime hit gets a reconstructed FirstSeen on backfill,
+      // never a blank one).
+      bool can_stamp = wifi_ops.effectiveFix() && !gps.getDatetime().isEmpty();
+      if ((gps.getGpsModuleStatus()) && (sd_obj.supported) &&
+          (can_stamp || wifi_ops.isGpsBufferingEnabled())) {
+
         utils.stringToMac(advertisedDevice->getAddress().toString().c_str(), macBytes);
 
         if (wifi_ops.seen_mac(macBytes))
@@ -113,18 +118,18 @@ class scanCallbacks : public NimBLEScanCallbacks {
 
         wifi_ops.setTotalBLECount(wifi_ops.getTotalBLECount() + 1);
 
-        gps_snapshot_t snap = gps.getSnapshot();
+        String ble_addr = (String)advertisedDevice->getAddress().toString().c_str();
 
-        bool do_save = false;
-
-        if (snap.fix)
-          do_save = true;
-
-        String wardrive_line = (String)advertisedDevice->getAddress().toString().c_str() + ",,[BLE]," + snap.datetime + ",0," + (String)advertisedDevice->getRSSI() + "," + snap.lat + "," + snap.lon + "," + snap.alt + "," + snap.accuracy + ",BLE";
-        Logger::log(GUD_MSG, (String)wifi_ops.mac_history_cursor + " | " + wardrive_line);
-
-        if (do_save)
+        if (can_stamp) {
+          gps_snapshot_t snap = gps.getSnapshot();
+          String wardrive_line = ble_addr + ",,[BLE]," + snap.datetime + ",0," + (String)advertisedDevice->getRSSI() + "," + snap.lat + "," + snap.lon + "," + snap.alt + "," + snap.accuracy + ",BLE";
+          Logger::log(GUD_MSG, (String)wifi_ops.mac_history_cursor + " | " + wardrive_line);
           buffer.append(wardrive_line + "\n");
+        }
+        else {
+          // No usable fix: queue the BLE hit to /pending.csv for backfill on reacquire.
+          wifi_ops.bufferBleDetection(ble_addr, advertisedDevice->getRSSI());
+        }
       }
     }
     else if (wifi_ops.run_mode == NODE_MODE) {
@@ -1768,7 +1773,11 @@ void WiFiOps::backfillPending() {
     if ((written % 20) == 0) delay(1);
   }
   in.close();
-  SD.remove("/pending.csv");
+  // Preserve the buffered set for diagnosis instead of destroying it — pending.csv
+  // is otherwise gone after backfill and can't be inspected.
+  SD.remove("/pending-last.csv");
+  if (!SD.rename("/pending.csv", "/pending-last.csv"))
+    SD.remove("/pending.csv");
   this->pending_count = 0;
   Logger::log(GUD_MSG, "[GBUF] Backfilled " + String(written) + ", dropped " + String(dropped));
 }
@@ -1783,11 +1792,32 @@ void WiFiOps::bufferPendingDetection(const String& line) {
   f.close();
 }
 
+// Queue a BLE hit seen without a GPS fix. Same pending format as WiFi
+// (millis,BSSID,SSID,auth,ch,RSSI,TYPE) so backfillPending() stamps it on
+// reacquire: BSSID=address, SSID empty, auth=[BLE], ch=0, TYPE=BLE.
+bool WiFiOps::effectiveFix() {
+  return gps.getFixStatus() && !this->sim_no_fix;
+}
+
+void WiFiOps::toggleSimNoFix() {
+  this->sim_no_fix = !this->sim_no_fix;
+  Logger::log(GUD_MSG, String("[GBUF] SIM GPS loss ") +
+              (this->sim_no_fix ? "ON — buffering (fix hidden)" : "OFF — fix restored"));
+}
+
+void WiFiOps::bufferBleDetection(const String& address, int rssi) {
+  String pend = String(millis()) + "," + address + ",,[BLE],0," + String(rssi) + ",BLE";
+  this->bufferPendingDetection(pend);
+  this->pending_count++;
+  Logger::log(GUD_MSG, "[GBUF] BLE buffered " + address + " (pending " +
+              String(this->pending_count) + ")");
+}
+
 void WiFiOps::processWardrive(uint16_t networks) {
   String display_string;
   bool do_save;
 
-  if (gps.getFixStatus() && !gps.getDatetime().isEmpty()) {
+  if (this->effectiveFix() && !gps.getDatetime().isEmpty()) {
     if (this->gps_buffering_enabled)
       this->backfillPending();
     this->last_fix_lat    = gps.getLat().toDouble();
@@ -1851,7 +1881,7 @@ void WiFiOps::processWardrive(uint16_t networks) {
           display_string.concat(this_bssid);
         }
 
-        if (gps.getFixStatus()) {
+        if (this->effectiveFix()) {
           do_save = !gps.getDatetime().isEmpty();
           display_string.concat(" | Lt: " + gps.getLat());
           display_string.concat(" | Ln: " + gps.getLon());
