@@ -34,6 +34,9 @@ void setup() {
   while (!Serial)
     delay(10);
 
+  Logger::log(STD_MSG, "[HEAP] setup-top free=" + String(ESP.getFreeHeap()) +
+              " maxAlloc=" + String(ESP.getMaxAllocHeap()));
+
   // Do SPI stuff first
   sharedSPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
 
@@ -78,6 +81,18 @@ void setup() {
   // Enable SD debug logging if setting is on
   Logger::enableSDLog(settings.loadSetting<bool>(DEBUG_LOG_NAME));
 
+  // Capture boot-time button holds once (justPressed is edge-triggered).
+  bool sel_held = c_btn.justPressed();
+  int mode_override = 0;
+  if (d_btn.justPressed()) mode_override = CORE_MODE;
+  else if (u_btn.justPressed()) mode_override = SOLO_MODE;
+
+  // Minimal-heap dock upload BEFORE the memory-heavy subsystems (GPS/UI/ADS-B/BLE)
+  // init, so mbedTLS gets a clean contiguous heap. Reboots into normal mode when
+  // done. Skipped when SELECT is held ("resume wardriving").
+  if (!sel_held)
+    wifi_ops.tryBootDockUpload();
+
   // Init battery
   battery.RunSetup();
   battery.battery_level = battery.getBatteryLevel();
@@ -88,10 +103,7 @@ void setup() {
   ui_obj.begin();
 
   // Init wifi and bluetooth
-  int mode_override = 0;
-  if (d_btn.justPressed()) mode_override = CORE_MODE;
-  else if (u_btn.justPressed()) mode_override = SOLO_MODE;
-  wifi_ops.begin(c_btn.justPressed() || mode_override != 0, mode_override);
+  wifi_ops.begin(sel_held || mode_override != 0, mode_override);
 
   // Init UI
   ui_obj.begin();
@@ -99,6 +111,8 @@ void setup() {
   settings.printJsonSettings(settings.getSettingsString());
 
   Logger::log(GUD_MSG, "Initialization complete!");
+  Logger::log(STD_MSG, "[HEAP] boot free=" + String(ESP.getFreeHeap()) +
+              " maxAlloc=" + String(ESP.getMaxAllocHeap()));
 }
 
 void loop() {

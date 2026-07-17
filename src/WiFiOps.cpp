@@ -2146,10 +2146,7 @@ bool WiFiOps::tryConnectToWiFi(unsigned long timeoutMs) {
   // Connect to WiFi with AP credentials
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
-  WiFi.setBandMode(WIFI_BAND_MODE_2G_ONLY);
-  esp_wifi_set_protocol(WIFI_IF_STA,
-      WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
-  WiFi.setTxPower(WIFI_POWER_19_5dBm);
+  WiFi.setBandMode(WIFI_BAND_MODE_AUTO);
   WiFi.begin(this->user_ap_ssid.c_str(), this->user_ap_password.c_str());
 
   // Wait while we connect
@@ -2163,7 +2160,8 @@ bool WiFiOps::tryConnectToWiFi(unsigned long timeoutMs) {
   if (WiFi.status() == WL_CONNECTED) {
     WiFi.setSleep(false);
     esp_wifi_set_ps(WIFI_PS_NONE);
-    WiFi.setTxPower(WIFI_POWER_19_5dBm);
+    Logger::log(STD_MSG, "[WIFI] associated rssi=" + String(WiFi.RSSI()) +
+                " ch=" + String(WiFi.channel()) + " (ch>14 = 5GHz)");
     display.clearScreen();
     display.tft->setCursor(0, 0);
     display.tft->print("Connected: ");
@@ -2200,16 +2198,12 @@ bool WiFiOps::wigleUpload(String filePath) {
   delay(100);
 
   if (!SD.exists(filePath)) {
-    display.clearScreen();
-    display.drawCenteredText(filePath + " not found", true);
     Logger::log(WARN_MSG, "File does not exist: " + filePath);
     return false;
   }
 
   File fileToUpload = SD.open(filePath);
   if (!fileToUpload) {
-    display.clearScreen();
-    display.drawCenteredText("Could not open file", true);
     Logger::log(WARN_MSG, "Could not open file: " + filePath);
     return false;
   }
@@ -2219,8 +2213,6 @@ bool WiFiOps::wigleUpload(String filePath) {
   String token = settings.loadSetting<String>("wt");
   if (username.isEmpty() || token.isEmpty()) {
     fileToUpload.close();
-    display.clearScreen();
-    display.drawCenteredText("No wigle creds", true);
     Logger::log(WARN_MSG, "Missing wigle credentials");
     return false;
   }
@@ -2260,18 +2252,23 @@ bool WiFiOps::wigleUpload(String filePath) {
 
   this->freeTlsGuard();
 
-  if (!client->connect("api.wigle.net", 443)) {
+  Logger::log(STD_MSG, "[HEAP] wigle pre-connect free=" + String(ESP.getFreeHeap()) +
+              " maxAlloc=" + String(ESP.getMaxAllocHeap()));
+
+  if (!client->connect("api.wigle.net", 443, 8000)) {
     fileToUpload.close();
     //delete client;
     client->stop();
     this->reserveTlsGuard();
-    display.clearScreen();
-    display.drawCenteredText("Could not connect", true);
     Logger::log(WARN_MSG, "Failed to connected to api.wigle.net");
     return false;
   }
 
   Serial.println("Connected");
+  client->setNoDelay(true);
+  Logger::log(STD_MSG, "[WIGLE] TLS connected=" + String(client->connected()) +
+              " wifi=" + String(WiFi.status()) + " rssi=" + String(WiFi.RSSI()) +
+              " nodelay=" + String(client->getNoDelay()));
 
   // Compose headers
   String auth = utils.base64Encode(username + ":" + token);
@@ -2293,70 +2290,150 @@ bool WiFiOps::wigleUpload(String filePath) {
 
   // Send body
   client->print(part1);
-  const size_t BUFFER_SIZE = 512;
+  const size_t BUFFER_SIZE = 4096;
   uint8_t buffer[BUFFER_SIZE];
 
   Serial.println("Finished sending part1");
+  {
+    char errbuf[100] = {0};
+    int le = client->lastError(errbuf, sizeof(errbuf));
+    Logger::log(STD_MSG, "[WIGLE] post-headers connected=" + String(client->connected()) +
+                " avail=" + String(client->available()) + " wifi=" + String(WiFi.status()) +
+                " writeErr=" + String(client->getWriteError()) +
+                " tlsErr=" + String(le) + " (" + String(errbuf) + ")");
+  }
 
   uint8_t percent_sent = 0;
   int wpb_last = -1;
 
   String display_percent = "";
 
+  display.tft->setTextSize(1);
+  display.tft->fillRect(0, 10, TFT_WIDTH, 28, ST77XX_BLACK);
+  display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  display.tft->setCursor(0, 12);
+  display.tft->print("wigle uploading");
+  display.tft->setCursor(0, 24);
+  {
+    String fn = filePath;
+    if (fn.startsWith("/")) fn = fn.substring(1);
+    if (fn.length() > 26) fn = fn.substring(0, 26);
+    display.tft->print(fn);
+  }
+
+  size_t fileSize = fileToUpload.size();
+  Logger::log(STD_MSG, "[WIGLE][REQ] POST api.wigle.net/api/v2/file/upload CL=" +
+              String(totalLength) + " fileSize=" + String((unsigned)fileSize) +
+              " authLen=" + String(auth.length()) + " part1=" + String(part1.length()) +
+              " heapFree=" + String(ESP.getFreeHeap()) +
+              " maxAlloc=" + String(ESP.getMaxAllocHeap()));
+
   size_t totalBytesSent = 0;
+  size_t shortWrites = 0;
+  bool sendConnLost = false;
+  int earlyAvail = 0;
+  int lastDecile = -1;
+  uint32_t sendStart = millis();
   while (fileToUpload.available()) {
     size_t bytesRead = fileToUpload.read(buffer, BUFFER_SIZE);
+    size_t w = client->write(buffer, bytesRead);
     totalBytesSent += bytesRead;
-    Serial.print("Writing ");
-    Serial.print(totalBytesSent);
-    Serial.println(" bytes...");
-    percent_sent = (totalBytesSent * 100) / fileToUpload.size();
-    client->write(buffer, bytesRead);
+    if (w != bytesRead) {
+      shortWrites++;
+      Logger::log(WARN_MSG, "[WIGLE][TX] SHORT WRITE " + String((unsigned)w) + "/" +
+                  String((unsigned)bytesRead) + " @off " + String((unsigned)totalBytesSent) +
+                  " connected=" + String(client->connected()));
+    }
+    if (!client->connected() && !sendConnLost) {
+      sendConnLost = true;
+      Logger::log(WARN_MSG, "[WIGLE][TX] SOCKET DROPPED mid-send @off " +
+                  String((unsigned)totalBytesSent));
+    }
+    if (!client->connected()) {
+      char eb[100] = {0};
+      int le = client->lastError(eb, sizeof(eb));
+      Logger::log(WARN_MSG, "[WIGLE][TX] ABORT — socket dead @off " +
+                  String((unsigned)totalBytesSent) + "/" + String((unsigned)fileSize) +
+                  " tlsErr=" + String(le) + " (" + String(eb) + ") writeErr=" +
+                  String(client->getWriteError()) + " wifi=" + String(WiFi.status()));
+      break;
+    }
+    int a = client->available();
+    if (a > 0 && earlyAvail == 0) {
+      earlyAvail = a;
+      Logger::log(WARN_MSG, "[WIGLE][TX] peer sent " + String(a) +
+                  "B mid-send @off " + String((unsigned)totalBytesSent) + " (early response?)");
+    }
+    percent_sent = fileSize ? (totalBytesSent * 100) / fileSize : 100;
+    if ((int)percent_sent / 10 != lastDecile) {
+      lastDecile = (int)percent_sent / 10;
+      Logger::log(STD_MSG, "[WIGLE][TX] " + String(percent_sent) + "% " +
+                  String((unsigned)(totalBytesSent/1024)) + "KB conn=" +
+                  String(client->connected()) + " heap=" + String(ESP.getFreeHeap()));
+    }
     if ((int)percent_sent != wpb_last) { wpb_last = percent_sent;
       int wpb=percent_sent, wpbw=TFT_WIDTH-4, wpbf=((wpbw-2)*wpb)/100;
       display.tft->drawRect(2,54,wpbw,10,ST77XX_WHITE);
       display.tft->fillRect(3,55,wpbf,8,ST77XX_GREEN);
       display.tft->fillRect(3+wpbf,55,(wpbw-2)-wpbf,8,ST77XX_BLACK);
+      display.tft->fillRect(0, 32, TFT_WIDTH, 8, ST77XX_BLACK);
+      display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+      display.tft->setCursor(0, 32);
+      display.tft->print(String(totalBytesSent / 1024) + "KB/" +
+                         String(fileSize / 1024) + "KB");
     }
   }
 
-  Logger::log(STD_MSG, "Uploaded file bytes: " + String(totalBytesSent));
-
-  client->print(part2);
-  client->print(part3);
+  size_t w2 = client->print(part2);
+  size_t w3 = client->print(part3);
   client->flush();
-
-  Serial.println("Finished sending part2 and part3");
+  uint32_t sendMs = millis() - sendStart;
+  Logger::log(STD_MSG, "[WIGLE][TX] body complete: " + String((unsigned)totalBytesSent) + "/" +
+              String((unsigned)fileSize) + "B in " + String(sendMs) + "ms shortWrites=" +
+              String((unsigned)shortWrites) + " tail=" + String((unsigned)(w2 + w3)) +
+              " connected=" + String(client->connected()) + " avail=" + String(client->available()));
 
   fileToUpload.close();
 
 
-  // Read response
+  // Read response (instrumented)
   String response;
-  response.reserve(600);
-  unsigned long timeout = millis();
-  while (millis() - timeout < 5000) {
+  response.reserve(1200);
+  const uint32_t R_TIMEOUT = 8000;    // hard cap; we normally break early once idle
+  uint32_t rStart = millis();
+  uint32_t firstByteMs = 0;
+  uint32_t lastData = 0;
+  bool peerClosed = false;
+  while (millis() - rStart < R_TIMEOUT) {
+    bool got = false;
     while (client->available()) {
+      if (firstByteMs == 0) firstByteMs = millis() - rStart;
       char c = client->read();
-      if (response.length() < 512) response += c;
+      if (response.length() < 1100) response += c;
+      got = true;
     }
-
-    delay(10);
+    if (got) lastData = millis();
+    if (!client->connected() && !client->available()) { peerClosed = true; break; }
+    // Full response headers received and the stream has gone idle — done.
+    if (lastData && response.indexOf("\r\n\r\n") >= 0 && (millis() - lastData) > 400) break;
+    delay(5);
   }
+  uint32_t rMs = millis() - rStart;
+  bool timeoutHit = (millis() - rStart >= R_TIMEOUT);
 
-  if (millis() - timeout > 5000)
-    Logger::log(WARN_MSG, "Timeout reached");
-  if (!client->connected())
-    Logger::log(WARN_MSG, "Client disconnected");
-      
+  Logger::log(STD_MSG, "[WIGLE][RX] respBytes=" + String(response.length()) +
+              " firstByteMs=" + String(firstByteMs) + " elapsedMs=" + String(rMs) +
+              " peerClosed=" + String(peerClosed) + " timeoutHit=" + String(timeoutHit) +
+              " connected=" + String(client->connected()) + " heap=" + String(ESP.getFreeHeap()));
+  Logger::log(STD_MSG, "[WIGLE][RX] raw>>>" + response + "<<<");
+
   client->stop();
   this->reserveTlsGuard();
 
-  String respTrunc = response.length() > 200 ? response.substring(0, 200) : response;
-  Logger::log(STD_MSG, "[WIGLE] Response: " + respTrunc);
-
-  bool ok = response.indexOf("200 OK") >= 0 || response.indexOf("409") >= 0;
-
+  bool ok = response.indexOf("200 OK") >= 0 ||
+            response.indexOf("\"success\":true") >= 0 ||
+            response.indexOf("409") >= 0;
+  Logger::log(STD_MSG, "[WIGLE] classified ok=" + String(ok));
 
   return ok;
 }
@@ -2391,23 +2468,18 @@ bool WiFiOps::wdgwarsUpload(String filePath) {
   delay(100);
 
   if (!SD.exists(filePath)) {
-    display.drawCenteredText(filePath + " not found", true);
     Logger::log(WARN_MSG, "[WDG] File not found: " + filePath);
     return false;
   }
 
   String apiKey = settings.loadSetting<String>(WDG_KEY_NAME);
   if (apiKey.isEmpty()) {
-    display.clearScreen();
-    display.drawCenteredText("No WDG API key", true);
     Logger::log(WARN_MSG, "[WDG] No WDG Wars API key configured");
     return false;
   }
 
   File fileToUpload = SD.open(filePath);
   if (!fileToUpload) {
-    display.clearScreen();
-    display.drawCenteredText("Could not open file", true);
     Logger::log(WARN_MSG, "[WDG] Could not open: " + filePath);
     return false;
   }
@@ -2429,15 +2501,17 @@ bool WiFiOps::wdgwarsUpload(String filePath) {
 
   this->freeTlsGuard();
 
-  if (!client->connect("wdgwars.pl", 443)) {
+  Logger::log(STD_MSG, "[HEAP] wdg pre-connect free=" + String(ESP.getFreeHeap()) +
+              " maxAlloc=" + String(ESP.getMaxAllocHeap()));
+
+  if (!client->connect("wdgwars.pl", 443, 8000)) {
     fileToUpload.close();
     client->stop();
     this->reserveTlsGuard();
-    display.clearScreen();
-    display.drawCenteredText("WDG connect fail", true);
     Logger::log(WARN_MSG, "[WDG] Failed to connect to wdgwars.pl");
     return false;
   }
+  client->setNoDelay(true);
 
   // HTTP request
   client->println("POST /api/v2/upload-csv HTTP/1.1");
@@ -2453,58 +2527,122 @@ bool WiFiOps::wdgwarsUpload(String filePath) {
   // Send body
   client->print(part1);
 
-  const size_t CHUNK = 512;
+  const size_t CHUNK = 4096;
   uint8_t buf[CHUNK];
   size_t totalSent = 0;
   uint8_t pct = 0;
   int wpb_last = -1;
   String pctStr;
 
+  display.tft->setTextSize(1);
+  display.tft->fillRect(0, 10, TFT_WIDTH, 28, ST77XX_BLACK);
+  display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  display.tft->setCursor(0, 12);
+  display.tft->print("wdg uploading");
+  display.tft->setCursor(0, 24);
+  {
+    String fn = filePath;
+    if (fn.startsWith("/")) fn = fn.substring(1);
+    if (fn.length() > 26) fn = fn.substring(0, 26);
+    display.tft->print(fn);
+  }
+
+  size_t wdgFileSize = fileToUpload.size();
+  Logger::log(STD_MSG, "[WDG][REQ] POST wdgwars.pl/api/v2/upload-csv CL=" +
+              String(totalLength) + " fileSize=" + String((unsigned)wdgFileSize) +
+              " keyLen=" + String(apiKey.length()) + " heapFree=" + String(ESP.getFreeHeap()) +
+              " maxAlloc=" + String(ESP.getMaxAllocHeap()));
+
+  size_t shortWrites = 0;
+  bool sendConnLost = false;
+  int lastDecile = -1;
+  uint32_t sendStart = millis();
   while (fileToUpload.available()) {
     size_t n = fileToUpload.read(buf, CHUNK);
+    size_t w = client->write(buf, n);
     totalSent += n;
-    client->write(buf, n);
-    pct = (totalSent * 100) / fileToUpload.size();
+    if (w != n) {
+      shortWrites++;
+      Logger::log(WARN_MSG, "[WDG][TX] SHORT WRITE " + String((unsigned)w) + "/" +
+                  String((unsigned)n) + " @off " + String((unsigned)totalSent) +
+                  " connected=" + String(client->connected()));
+    }
+    if (!client->connected() && !sendConnLost) {
+      sendConnLost = true;
+      Logger::log(WARN_MSG, "[WDG][TX] SOCKET DROPPED mid-send @off " + String((unsigned)totalSent));
+    }
+    if (!client->connected()) {
+      Logger::log(WARN_MSG, "[WDG][TX] ABORT — socket dead, stopping send @off " +
+                  String((unsigned)totalSent) + "/" + String((unsigned)wdgFileSize));
+      break;
+    }
+    pct = wdgFileSize ? (totalSent * 100) / wdgFileSize : 100;
+    if ((int)pct / 10 != lastDecile) {
+      lastDecile = (int)pct / 10;
+      Logger::log(STD_MSG, "[WDG][TX] " + String(pct) + "% " +
+                  String((unsigned)(totalSent/1024)) + "KB conn=" +
+                  String(client->connected()) + " heap=" + String(ESP.getFreeHeap()));
+    }
     if ((int)pct != wpb_last) { wpb_last = pct;
       int wpb=pct, wpbw=TFT_WIDTH-4, wpbf=((wpbw-2)*wpb)/100;
       display.tft->drawRect(2,54,wpbw,10,ST77XX_WHITE);
       display.tft->fillRect(3,55,wpbf,8,ST77XX_GREEN);
       display.tft->fillRect(3+wpbf,55,(wpbw-2)-wpbf,8,ST77XX_BLACK);
+      display.tft->fillRect(0, 32, TFT_WIDTH, 8, ST77XX_BLACK);
+      display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+      display.tft->setCursor(0, 32);
+      display.tft->print(String(totalSent / 1024) + "KB/" +
+                         String(wdgFileSize / 1024) + "KB");
     }
   }
 
-  client->print(part2);
+  size_t w2 = client->print(part2);
   client->flush();
   fileToUpload.close();
+  uint32_t sendMs = millis() - sendStart;
+  Logger::log(STD_MSG, "[WDG][TX] body complete: " + String((unsigned)totalSent) + "/" +
+              String((unsigned)wdgFileSize) + "B in " + String(sendMs) + "ms shortWrites=" +
+              String((unsigned)shortWrites) + " tail=" + String((unsigned)w2) +
+              " connected=" + String(client->connected()) + " avail=" + String(client->available()));
 
-  Logger::log(STD_MSG, "[WDG] Bytes sent: " + String(totalSent));
-
-  // Read response
+  // Read response (instrumented)
   String response;
-  response.reserve(600);
-  unsigned long t = millis();
-  while (millis() - t < 5000) {
+  response.reserve(1200);
+  const uint32_t R_TIMEOUT = 8000;    // hard cap; we normally break early once idle
+  uint32_t rStart = millis();
+  uint32_t firstByteMs = 0;
+  uint32_t lastData = 0;
+  bool peerClosed = false;
+  while (millis() - rStart < R_TIMEOUT) {
+    bool got = false;
     while (client->available()) {
+      if (firstByteMs == 0) firstByteMs = millis() - rStart;
       char c = client->read();
-      if (response.length() < 512) response += c;
+      if (response.length() < 1100) response += c;
+      got = true;
     }
-    if (!client->connected() && !client->available())
-      break;
-
-    delay(10);
+    if (got) lastData = millis();
+    if (!client->connected() && !client->available()) { peerClosed = true; break; }
+    // Full response headers received and the stream has gone idle — done.
+    if (lastData && response.indexOf("\r\n\r\n") >= 0 && (millis() - lastData) > 400) break;
+    delay(5);
   }
+  uint32_t rMs = millis() - rStart;
+  bool timeoutHit = (millis() - rStart >= R_TIMEOUT);
+  Logger::log(STD_MSG, "[WDG][RX] respBytes=" + String(response.length()) +
+              " firstByteMs=" + String(firstByteMs) + " elapsedMs=" + String(rMs) +
+              " peerClosed=" + String(peerClosed) + " timeoutHit=" + String(timeoutHit) +
+              " connected=" + String(client->connected()) + " heap=" + String(ESP.getFreeHeap()));
+  Logger::log(STD_MSG, "[WDG][RX] raw>>>" + response + "<<<");
+
   client->stop();
   this->reserveTlsGuard();
 
-  // Capture first 200 chars of response for log viewer
-  String respTrunc = response.length() > 200 ? response.substring(0, 200) : response;
-  Logger::log(STD_MSG, "[WDG] Response: " + respTrunc);
-
-  // WDG Wars returns 200 on success
   bool ok = response.indexOf("202 Accepted") >= 0 ||
-  response.indexOf("\"ok\":true") >= 0 ||
-  response.indexOf("409") >= 0;
-
+            response.indexOf("200 OK") >= 0 ||
+            response.indexOf("\"ok\":true") >= 0 ||
+            response.indexOf("409") >= 0;
+  Logger::log(STD_MSG, "[WDG] classified ok=" + String(ok));
 
   return ok;
 }
@@ -2571,9 +2709,14 @@ void WiFiOps::reserveTlsGuard() {
     void *p = malloc(sz);
     if (p) {
       this->tls_heap_guard = p;
+      this->tls_heap_guard_sz = sz;
+      Logger::log(STD_MSG, "[HEAP] TLS guard reserved " + String((unsigned)(sz / 1024)) +
+                  "KB, maxAlloc now " + String(ESP.getMaxAllocHeap()));
       return;
     }
   }
+  Logger::log(WARN_MSG, "[HEAP] TLS guard reserve FAILED (maxAlloc " +
+              String(ESP.getMaxAllocHeap()) + ")");
 }
 
 void WiFiOps::freeTlsGuard() {
@@ -2582,8 +2725,67 @@ void WiFiOps::freeTlsGuard() {
   this->tls_heap_guard = nullptr;
 }
 
+void WiFiOps::drawUploadCounts(int ok, int failed, int pending) {
+  display.tft->setCursor(0, 40);
+  display.tft->setTextColor(ST77XX_GREEN, ST77XX_BLACK);
+  display.tft->print("OK " + String(ok) + " ");
+  display.tft->setTextColor(failed > 0 ? ST77XX_RED : ST77XX_GREEN, ST77XX_BLACK);
+  display.tft->print("Fail " + String(failed) + " ");
+  display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  display.tft->print("Left " + String(pending));
+}
+
+bool WiFiOps::tryBootDockUpload() {
+  esp_reset_reason_t rr = esp_reset_reason();
+  if (rr == ESP_RST_POWERON || rr == ESP_RST_BROWNOUT || rr == ESP_RST_UNKNOWN)
+    rtc_dock_done = false;
+
+  if (rtc_dock_done) return false;                       // already synced this dock session
+
+  String trig = settings.loadSetting<String>(TRIGGER_SSID_NAME);
+  if (trig.isEmpty()) return false;                      // docking not configured
+
+  Logger::log(STD_MSG, "[DOCK] Minimal-boot dock upload — clean heap before feature init");
+  Logger::log(STD_MSG, "[HEAP] pre-upload free=" + String(ESP.getFreeHeap()) +
+              " maxAlloc=" + String(ESP.getMaxAllocHeap()));
+
+  this->initWiFi();
+  bool connected = this->tryConnectToWiFi();
+  this->connected_as_client = connected;
+
+  if (connected) {
+    display.clearScreen();
+    display.tft->setCursor(0, 0);
+    display.tft->setTextSize(2);
+    display.tft->setTextColor(ST77XX_CYAN, ST77XX_BLACK);
+    display.tft->println("UPLOADING");
+    display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    display.tft->setTextSize(1);
+    display.tft->println("Syncing pending logs...");
+    this->uploadAllPendingV2();
+  } else {
+    Logger::log(WARN_MSG, "[DOCK] Minimal-boot: WiFi connect failed — skipping upload");
+  }
+
+  rtc_dock_done = true;
+  Logger::log(GUD_MSG, "[DOCK] Minimal-boot upload done — rebooting to normal mode");
+  delay(200);
+  ESP.restart();
+  return true;                                           // unreachable (reboots)
+}
+
 void WiFiOps::uploadAllPendingV2() {
   if (!sd_obj.supported) { Logger::log(WARN_MSG, "[UPLOAD] SD not available"); return; }
+  Logger::log(STD_MSG, "[HEAP] dock-upload start free=" + String(ESP.getFreeHeap()) +
+              " maxAlloc=" + String(ESP.getMaxAllocHeap()));
+
+  size_t ma = ESP.getMaxAllocHeap();
+  if (ma < 60 * 1024) {
+    Logger::log(WARN_MSG, "[UPLOAD] Skipping — maxAlloc " + String((unsigned)ma) +
+                " < 60KB; not enough contiguous heap for TLS (needs minimal-boot path)");
+    return;
+  }
+
   this->reserveTlsGuard();
 
   UploadManager mgr;
@@ -2621,20 +2823,24 @@ void WiFiOps::uploadAllPendingV2() {
   display.tft->setTextColor(ST77XX_CYAN, ST77XX_BLACK);
   display.tft->setCursor(0, 0);
   display.tft->print("== DOCK UPLOAD ==");
+  {
+    UploadManager::Stats ss0 = mgr.stats();
+    this->drawUploadCounts(ss0.ok, ss0.failed, ss0.pending);
+  }
   while (mgr.runNext(millis())) {
     UploadManager::Stats ss = mgr.stats();
     display.tft->fillRect(0, 10, TFT_WIDTH, 40, ST77XX_BLACK);
-    display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    String stage = mgr.lastStage();
+    bool badStage = (stage == "backoff" || stage == "error");
+    display.tft->setTextColor(badStage ? ST77XX_YELLOW : ST77XX_WHITE, ST77XX_BLACK);
     display.tft->setCursor(0, 12);
-    display.tft->print(String(mgr.lastService()) + " " + mgr.lastStage());
+    display.tft->print(String(mgr.lastService()) + " " + stage);
+    display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
     display.tft->setCursor(0, 24);
     String fn = String(mgr.lastFile()); if (fn.startsWith("/")) fn = fn.substring(1);
     if (fn.length() > 26) fn = fn.substring(0, 26);
     display.tft->print(fn);
-    display.tft->setTextColor(ST77XX_GREEN, ST77XX_BLACK);
-    display.tft->setCursor(0, 40);
-    display.tft->print("OK " + String(ss.ok) + " Fail " + String(ss.failed) +
-                       " Left " + String(ss.pending));
+    this->drawUploadCounts(ss.ok, ss.failed, ss.pending);
     if (!this->tls_heap_guard && mgr.stats().ok >= 3) {
       Logger::log(GUD_MSG, "[UPLOAD] Heap low after " + String(mgr.stats().ok) + " uploads, rebooting to continue");
       delay(300);
@@ -3229,8 +3435,6 @@ bool WiFiOps::begin(bool skip_admin, int mode_override) {
     rtc_dock_done = true;
   }
 
-  this->reserveTlsGuard();
-
   this->run_mode = settings.loadSetting<int>("m");
   if (mode_override != 0) this->run_mode = mode_override;
   this->gps_buffering_enabled = settings.loadSetting<bool>(GPS_BUFFER_NAME);
@@ -3249,35 +3453,9 @@ bool WiFiOps::begin(bool skip_admin, int mode_override) {
       this->startAccessPoint();
     }
 
-    // Boot-time dock upload (opt-in: only when a dock trigger SSID is configured).
-    // Add: When docking is enabled, and we connect as a client, sync all pending logs
-    // first, then fall through to the existing config manager.
-    if (connected) {
-      String boot_dock_ssid = settings.loadSetting<String>(TRIGGER_SSID_NAME);
-      if (!boot_dock_ssid.isEmpty()) {
-        Logger::log(STD_MSG, "[DOCK] Boot dock — uploading pending logs before config");
-        display.clearScreen();
-        display.tft->setCursor(0, 0);
-        display.tft->setTextSize(2);
-        display.tft->setTextColor(ST77XX_CYAN, ST77XX_BLACK);
-        display.tft->println("UPLOADING");
-        display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-        display.tft->setTextSize(1);
-        display.tft->println("Syncing pending logs...");
-        this->uploadAllPendingV2();
-        Logger::log(GUD_MSG, "[DOCK] Boot dock upload complete");
-        rtc_dock_done = true;
-
-        // Restore the connect/IP screen after we sync logs.
-        display.clearScreen();
-        display.tft->setCursor(0, 0);
-        display.tft->setTextSize(1);
-        display.tft->print("Connected: ");
-        display.tft->println(this->user_ap_ssid);
-        display.tft->print("IP: ");
-        display.tft->println(WiFi.localIP());
-      }
-    }
+    // Boot-time dock upload now runs earlier via tryBootDockUpload() (minimal-heap
+    // path in setup(), before the memory-heavy subsystems init) and reboots here,
+    // so by the time begin() runs the pending logs are already synced.
 
     this->serveConfigPage();
 
@@ -3474,10 +3652,7 @@ void WiFiOps::handleDockConnecting() {
 
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
-  WiFi.setBandMode(WIFI_BAND_MODE_2G_ONLY);
-  esp_wifi_set_protocol(WIFI_IF_STA,
-      WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
-  WiFi.setTxPower(WIFI_POWER_19_5dBm);
+  WiFi.setBandMode(WIFI_BAND_MODE_AUTO);
   WiFi.begin(trigSSID.c_str(), trigPass.c_str());
 
   unsigned long start = millis();

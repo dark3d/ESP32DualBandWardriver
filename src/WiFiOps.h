@@ -148,7 +148,7 @@ class WiFiOps
 
     WiFiClientSecure *client = new WiFiClientSecure();
     void *tls_heap_guard = nullptr;
-    void reserveTlsGuard();
+    size_t tls_heap_guard_sz = 0;
     void freeTlsGuard();
 
     String user_ap_ssid = "";
@@ -301,8 +301,11 @@ class WiFiOps
     bool uploadFile(String filePath,
                     bool retry = false,
                     uint8_t upload_type = WIGLE_UPLOAD);       // upload to both services (sidecar-aware)
+    void reserveTlsGuard();                    // reserve a contiguous TLS arena (call at boot, heap pristine)
+    bool tryBootDockUpload();                  // minimal-heap boot upload (before heavy init), reboots to normal
     void uploadAllPending();                   // scan SD and upload all files missing sidecars
     void uploadAllPendingV2();                 // strangler: drive UploadManager (per-service backoff)
+    void drawUploadCounts(int ok, int failed, int pending);
     void setCurrentScanMode(uint8_t scan_mode);
     uint8_t getCurrentScanMode();
     void setTotalNetCount(uint32_t count);
