@@ -2088,7 +2088,7 @@ void WiFiOps::startLog(String file_name) {
                        ",model=" + (String)DEVICE_NAME +
                        ",release=" + (String)FIRMWARE_VERSION +
                        ",device=" + (String)DEVICE_NAME +
-                       ",display=SPI TFT,board=ESP32-C5-DevKit,brand=JustCallMeKoko\n"
+                       ",display=SPI TFT,board=ESP32-C5-DevKit,brand=Dark3D\n"
                        "MAC,SSID,AuthMode,FirstSeen,Channel,RSSI,"
                        "CurrentLatitude,CurrentLongitude,AltitudeMeters,AccuracyMeters,Type";
   buffer.append(header_line + "\n");

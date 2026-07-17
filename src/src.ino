@@ -28,6 +28,14 @@ Switches u_btn = Switches(U_BTN, 1000, U_PULL);
 Switches d_btn = Switches(D_BTN, 1000, D_PULL);
 Switches c_btn = Switches(C_BTN, 1000, C_PULL);
 
+// Boot progress bar along the bottom of the splash.
+static void bootBar(uint8_t pct) {
+  if (pct > 100) pct = 100;
+  int w = TFT_WIDTH - 8;
+  display.tft->drawRect(4, 74, w, 5, ST77XX_WHITE);
+  display.tft->fillRect(5, 75, (w - 2) * pct / 100, 3, ST77XX_CYAN);
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -80,6 +88,7 @@ void setup() {
 
   // Enable SD debug logging if setting is on
   Logger::enableSDLog(settings.loadSetting<bool>(DEBUG_LOG_NAME));
+  bootBar(35);
 
   // Capture boot-time button holds once (justPressed is edge-triggered).
   bool sel_held = c_btn.justPressed();
@@ -96,9 +105,11 @@ void setup() {
   // Init battery
   battery.RunSetup();
   battery.battery_level = battery.getBatteryLevel();
+  bootBar(55);
 
   // Init GPS
   gps.begin();
+  bootBar(75);
 
   ui_obj.begin();
 

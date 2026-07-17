@@ -31,10 +31,15 @@ void Display::begin() {
 
   this->drawMonochromeImage160x80(logo2, 160, 80);
 
+  // Full version (keep +dark3d so it never reads as koko firmware), centered
+  // under the logo, above the boot bar. Full string only fits at size 1.
   tft->setTextSize(1);
   tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-  tft->setCursor(0, TFT_HEIGHT - 8);
-  tft->print(FIRMWARE_VERSION);
+  String ver = FIRMWARE_VERSION;
+  int16_t bx, by; uint16_t bw, bh;
+  tft->getTextBounds(ver, 0, 0, &bx, &by, &bw, &bh);
+  tft->setCursor((TFT_WIDTH - (int)bw) / 2, 64);
+  tft->print(ver);
 
   this->ctrlBacklight(true);
 }
@@ -69,7 +74,15 @@ void Display::drawMonochromeImage160x80(const uint8_t* imageData, int width, int
 
       // MSB first (bit 7 is leftmost pixel)
       bool pixelOn = (byteVal >> (7 - (x % 8))) & 0x01;
-      uint16_t color = pixelOn ? ST77XX_WHITE : ST77XX_BLACK;
+      // Vertical gradient on the logo: cyan (top) -> magenta (bottom). RGB565.
+      uint16_t color = ST77XX_BLACK;
+      if (pixelOn) {
+        int denom = (height > 1) ? (height - 1) : 1;
+        int r = (31 * y) / denom;        // 0 -> 31
+        int g = 63 - (63 * y) / denom;   // 63 -> 0
+        int b = 31;                      // constant
+        color = (uint16_t)((r << 11) | (g << 5) | b);
+      }
 
       // Adjust for rotation 3 (landscape)
       int x_rot = x;
