@@ -9,7 +9,7 @@ extern bool g_force_display_redraw;
 // Survives ESP.restart() (reboot-to-upload dock path) but not a power cycle.
 // Set once the arrival's dock upload has drained; blocks re-docking until the
 // trigger SSID has been absent long enough to count as a departure.
-RTC_DATA_ATTR bool rtc_dock_done = false;
+RTC_NOINIT_ATTR bool rtc_dock_done;
 
 static const uint8_t BROADCAST_MAC[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 static const char MAGIC[4] = {'E','N','O','W'};
@@ -1052,10 +1052,12 @@ void WiFiOps::OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, i
       }*/
 
       if ((t->len <= ENOW_TEXT_MAX) && (!wifi_ops.checkGeofences())) {
-        Serial.printf("CORE: RX WARDRV TEXT from %s: %s\n", srcMacStr, t->text);
+        enow_text_msg_t safe = *t;
+        safe.text[safe.len] = '\0';
+        Serial.printf("CORE: RX WARDRV TEXT from %s: %s\n", srcMacStr, safe.text);
 
         WardriveRecord rec;
-        if (wifi_ops.parseWardriveLine(*t, rec)) {
+        if (wifi_ops.parseWardriveLine(safe, rec)) {
           uint8_t bssid[6] = {0};
           utils.convertMacStringToUint8(rec.bssid, bssid);
 
@@ -2767,6 +2769,7 @@ void WiFiOps::drawUploadCounts(int ok, int failed, int pending) {
 
 bool WiFiOps::tryBootDockUpload() {
   esp_reset_reason_t rr = esp_reset_reason();
+  Logger::log(STD_MSG, "[DOCK] boot rr=" + String((int)rr) + " latch=" + String(rtc_dock_done ? 1 : 0));
   if (rr == ESP_RST_POWERON || rr == ESP_RST_BROWNOUT || rr == ESP_RST_UNKNOWN)
     rtc_dock_done = false;
 

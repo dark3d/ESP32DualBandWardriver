@@ -54,8 +54,7 @@ void Buffer::open(bool is_pcap){
 }
 
 void Buffer::openFile(String file_name, fs::FS* fs, bool serial, bool is_pcap) {
-  bool save_pcap = settings.loadSetting<bool>("SavePCAP");
-  if (!save_pcap) {
+  if (is_pcap && !settings.loadSetting<bool>("SavePCAP")) {
     this->fs = NULL;
     this->serial = false;
     writing = false;
@@ -82,6 +81,10 @@ void Buffer::logOpen(String file_name, fs::FS* fs, bool serial) {
 }
 
 void Buffer::add(const uint8_t* buf, uint32_t len, bool is_pcap){
+  if(len + (is_pcap ? 16 : 0) > BUF_SIZE){
+    return;
+  }
+
   // buffer is full -> drop packet
   if((useA && bufSizeA + len >= BUF_SIZE && bufSizeB > 0) || (!useA && bufSizeB + len >= BUF_SIZE && bufSizeA > 0)){
     return;
@@ -117,10 +120,7 @@ void Buffer::append(wifi_promiscuous_pkt_t *packet, int len) {
 }
 
 void Buffer::append(String log) {
-  bool save_packet = settings.loadSetting<bool>("SavePCAP");
-  if (save_packet) {
-    add((const uint8_t*)log.c_str(), log.length(), false);
-  }
+  add((const uint8_t*)log.c_str(), log.length(), false);
 }
 
 void Buffer::write(int32_t n){
