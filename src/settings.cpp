@@ -1,7 +1,103 @@
 #include "settings.h"
 
+volatile bool Settings::write_in_flight = false;
+
 String Settings::getSettingsString() {
   return this->json_settings_string;
+}
+
+bool Settings::isWriteInFlight() {
+  return write_in_flight;
+}
+
+void Settings::safeRestart() {
+  uint32_t start = millis();
+  while (write_in_flight && (millis() - start) < 1000) {
+    delay(5);
+  }
+  ESP.restart();
+}
+
+bool Settings::readSettingsFile(const char *path, String &out) {
+  if (!SPIFFS.exists(path))
+    return false;
+  File f = SPIFFS.open(path, FILE_READ);
+  if (!f)
+    return false;
+  out = f.readString();
+  f.close();
+  return true;
+}
+
+bool Settings::settingsBlobValid(const String &blob) {
+  if (blob.length() < 20)
+    return false;
+  DynamicJsonDocument json(SETTINGS_JSON_SIZE);
+  if (deserializeJson(json, blob))
+    return false;
+  JsonArrayConst arr = json["Settings"];
+  if (arr.isNull() || arr.size() < 4)
+    return false;
+  return true;
+}
+
+bool Settings::writeSettingsBlob(const String &blob) {
+  if (!settingsBlobValid(blob)) {
+    Logger::log(WARN_MSG, "[SETTINGS] Refusing to persist invalid blob");
+    return false;
+  }
+
+  write_in_flight = true;
+
+  SPIFFS.remove(SETTINGS_TMP_FILE);
+  File tmp = SPIFFS.open(SETTINGS_TMP_FILE, FILE_WRITE);
+  if (!tmp) {
+    write_in_flight = false;
+    Logger::log(WARN_MSG, "[SETTINGS] Could not open temp file");
+    return false;
+  }
+  size_t written = tmp.print(blob);
+  tmp.flush();
+  tmp.close();
+
+  String check;
+  if (written != blob.length() ||
+      !readSettingsFile(SETTINGS_TMP_FILE, check) || check != blob) {
+    SPIFFS.remove(SETTINGS_TMP_FILE);
+    write_in_flight = false;
+    Logger::log(WARN_MSG, "[SETTINGS] Temp file verify failed");
+    return false;
+  }
+
+  String cur;
+  if (readSettingsFile(WIFI_CONFIG, cur) && settingsBlobValid(cur)) {
+    SPIFFS.remove(SETTINGS_BAK_FILE);
+    File bak = SPIFFS.open(SETTINGS_BAK_FILE, FILE_WRITE);
+    if (bak) {
+      bak.print(cur);
+      bak.flush();
+      bak.close();
+    }
+  }
+
+  SPIFFS.remove(WIFI_CONFIG);
+  bool ok = SPIFFS.rename(SETTINGS_TMP_FILE, WIFI_CONFIG);
+  if (!ok) {
+    File p = SPIFFS.open(WIFI_CONFIG, FILE_WRITE);
+    if (p) {
+      size_t w = p.print(blob);
+      p.flush();
+      p.close();
+      ok = (w == blob.length());
+    }
+    if (ok)
+      SPIFFS.remove(SETTINGS_TMP_FILE);
+  }
+
+  if (ok)
+    this->json_settings_string = blob;
+  write_in_flight = false;
+  return ok;
 }
 
 bool Settings::begin() {
@@ -10,38 +106,36 @@ bool Settings::begin() {
     return false;
   }
 
-  File settingsFile;
+  String blob;
 
-  //SPIFFS.remove("/settings.json"); // NEED TO REMOVE THIS LINE
+  if (readSettingsFile(WIFI_CONFIG, blob) && settingsBlobValid(blob)) {
+    this->json_settings_string = blob;
 
-  if (SPIFFS.exists(WIFI_CONFIG)) {
-    settingsFile = SPIFFS.open(WIFI_CONFIG, FILE_READ);
-    
-    if (!settingsFile) {
-      settingsFile.close();
-      Logger::log(WARN_MSG, "Could not find settings file");
-      if (this->createDefaultSettings(SPIFFS))
-        return true;
-      else
-        return false;    
+    String bak;
+    if (!(readSettingsFile(SETTINGS_BAK_FILE, bak) && settingsBlobValid(bak))) {
+      SPIFFS.remove(SETTINGS_BAK_FILE);
+      File b = SPIFFS.open(SETTINGS_BAK_FILE, FILE_WRITE);
+      if (b) {
+        b.print(blob);
+        b.flush();
+        b.close();
+      }
     }
-  }
-  else {
-    Logger::log(WARN_MSG, "Settings file does not exist");
-    if (this->createDefaultSettings(SPIFFS))
-      return true;
-    else
-      return false;
+    return true;
   }
 
-  String json_string;
-  DynamicJsonDocument jsonBuffer(SETTINGS_JSON_SIZE);
-  DeserializationError error = deserializeJson(jsonBuffer, settingsFile);
-  serializeJson(jsonBuffer, json_string);
+  if ((readSettingsFile(SETTINGS_TMP_FILE, blob) && settingsBlobValid(blob)) ||
+      (readSettingsFile(SETTINGS_BAK_FILE, blob) && settingsBlobValid(blob))) {
+    Logger::log(WARN_MSG, "[SETTINGS] Primary invalid — recovering from backup");
+    this->json_settings_string = blob;
+    this->writeSettingsBlob(blob);
+    return true;
+  }
 
-  this->json_settings_string = json_string;
-  
-  return true;
+  Logger::log(WARN_MSG, "[SETTINGS] No valid settings found — creating defaults");
+  if (this->createDefaultSettings(SPIFFS))
+    return true;
+  return false;
 }
 
 void Settings::wipeSPIFFS() {
@@ -222,42 +316,19 @@ bool Settings::saveSetting<bool>(String key, bool value) {
     Logger::log(WARN_MSG, "Could not parse json to save");
   }
 
-  String settings_string;
-
-  bool found = false;
-
   for (int i = 0; i < json["Settings"].size(); i++) {
     if (json["Settings"][i]["name"].as<String>() == key) {
       json["Settings"][i]["value"] = value;
 
-      File settingsFile = SPIFFS.open(WIFI_CONFIG, FILE_WRITE);
-
-      if (!settingsFile) {
-        Logger::log(WARN_MSG, "Failed to create settings file");
-        return false;
-      }
-
-      if (serializeJson(json, settingsFile) == 0) {
-        Logger::log(WARN_MSG, "Failed to write to file");
-      }
-      if (serializeJson(json, settings_string) == 0) {
-        Logger::log(WARN_MSG, "Failed to write to string");
-      }
-    
-      // Close the file
-      settingsFile.close();
-    
-      this->json_settings_string = settings_string;
-          
-      return true;
+      String settings_string;
+      serializeJson(json, settings_string);
+      return this->writeSettingsBlob(settings_string);
     }
   }
 
-  if (!found) {
-    Logger::log(WARN_MSG, "Did not find setting named " + (String)key + ". Creating...");
-    if (this->createDefaultSettings(SPIFFS, true, json["Settings"].size(), "bool", key))
-      return true;
-  }
+  Logger::log(WARN_MSG, "Did not find setting named " + (String)key + ". Creating...");
+  if (this->createDefaultSettings(SPIFFS, true, json["Settings"].size(), "bool", key))
+    return true;
 
   return false;
 }
@@ -273,42 +344,20 @@ bool Settings::saveSetting<bool>(String key, int value, bool is_int) {
     Logger::log(WARN_MSG, "Could not parse json to save");
   }
 
-  String settings_string;
-
-  bool found = false;
-
   for (int i = 0; i < json["Settings"].size(); i++) {
     if (json["Settings"][i]["name"].as<String>() == key) {
       json["Settings"][i]["value"] = value;
 
-      File settingsFile = SPIFFS.open(WIFI_CONFIG, FILE_WRITE);
-
-      if (!settingsFile) {
-        Logger::log(WARN_MSG, "Failed to create settings file");
-        return false;
-      }
-
-      if (serializeJson(json, settingsFile) == 0) {
-        Logger::log(WARN_MSG, "Failed to write to file");
-      }
-      if (serializeJson(json, settings_string) == 0) {
-        Logger::log(WARN_MSG, "Failed to write to string");
-      }
-    
-      // Close the file
-      settingsFile.close();
-    
-      this->json_settings_string = settings_string;
-          
-      return true;
+      String settings_string;
+      serializeJson(json, settings_string);
+      return this->writeSettingsBlob(settings_string);
     }
   }
 
-  if (!found) {
-    Logger::log(WARN_MSG, "Did not find setting named " + (String)key + ". Creating...");
-    if (this->createDefaultSettings(SPIFFS, true, json["Settings"].size(), "bool", key))
-      return true;
-  }
+  Logger::log(WARN_MSG, "Did not find setting named " + (String)key + ". Creating...");
+  if (this->createDefaultSettings(SPIFFS, true, json["Settings"].size(), "bool", key))
+    return true;
+
   return false;
 }
 
@@ -323,42 +372,20 @@ bool Settings::saveSetting<bool>(String key, String value) {
     Logger::log(WARN_MSG, "Could not parse json to save");
   }
 
-  String settings_string;
-
-  bool found = false;
-
   for (int i = 0; i < json["Settings"].size(); i++) {
     if (json["Settings"][i]["name"].as<String>() == key) {
       json["Settings"][i]["value"] = value;
 
-      File settingsFile = SPIFFS.open(WIFI_CONFIG, FILE_WRITE);
-
-      if (!settingsFile) {
-        Logger::log(WARN_MSG, "Failed to create settings file");
-        return false;
-      }
-
-      if (serializeJson(json, settingsFile) == 0) {
-        Logger::log(WARN_MSG, "Failed to write to file");
-      }
-      if (serializeJson(json, settings_string) == 0) {
-        Logger::log(WARN_MSG, "Failed to write to string");
-      }
-    
-      // Close the file
-      settingsFile.close();
-    
-      this->json_settings_string = settings_string;
-          
-      return true;
+      String settings_string;
+      serializeJson(json, settings_string);
+      return this->writeSettingsBlob(settings_string);
     }
   }
 
-  if (!found) {
-    Logger::log(WARN_MSG, "Did not find setting named " + (String)key + ". Creating...");
-    if (this->createDefaultSettings(SPIFFS, true, json["Settings"].size(), "bool", key))
-      return true;
-  }
+  Logger::log(WARN_MSG, "Did not find setting named " + (String)key + ". Creating...");
+  if (this->createDefaultSettings(SPIFFS, true, json["Settings"].size(), "bool", key))
+    return true;
+
   return false;
 }
 
@@ -456,17 +483,11 @@ void Settings::printJsonSettings(String json_string) {
 }
 
 bool Settings::createDefaultSettings(fs::FS &fs, bool spec, uint8_t index, String typeStr, String name) {
+  (void)fs;
   Logger::log(STD_MSG, "Creating default settings file: settings.json");
 
   if (!spec)
     this->wipeSPIFFS();
-      
-  File settingsFile = fs.open(WIFI_CONFIG, FILE_WRITE);
-
-  if (!settingsFile) {
-    Logger::log(WARN_MSG, "Failed to create settings file");
-    return false;
-  }
 
   String settings_string;
 
@@ -582,10 +603,6 @@ bool Settings::createDefaultSettings(fs::FS &fs, bool spec, uint8_t index, Strin
       if (serializeJson(json, settings_string) == 0) {
         Logger::log(WARN_MSG, "Failed to write to string");
       }
-
-      if (serializeJson(json, settingsFile) == 0) {
-        Logger::log(WARN_MSG, "Failed to write to file");
-      }
     }
     else if (typeStr == "String") {
       Logger::log(WARN_MSG, "Creating String setting...");
@@ -597,10 +614,6 @@ bool Settings::createDefaultSettings(fs::FS &fs, bool spec, uint8_t index, Strin
 
       if (serializeJson(json, settings_string) == 0) {
         Logger::log(WARN_MSG, "Failed to write to string");
-      }
-
-      if (serializeJson(json, settingsFile) == 0) {
-        Logger::log(WARN_MSG, "Failed to write to file");
       }
     }
     else if (typeStr == "Int") {
@@ -614,24 +627,18 @@ bool Settings::createDefaultSettings(fs::FS &fs, bool spec, uint8_t index, Strin
       if (serializeJson(json, settings_string) == 0) {
         Logger::log(WARN_MSG, "Failed to write to string");
       }
-
-      if (serializeJson(json, settingsFile) == 0) {
-        Logger::log(WARN_MSG, "Failed to write to file");
-      }
     }
   }
 
-  // Close the file
-  settingsFile.close();
+  if (settings_string == "")
+    return false;
 
-  if (settings_string != "") {
-    this->json_settings_string = settings_string;
+  bool ok = this->writeSettingsBlob(settings_string);
 
-    if (!spec)
-      this->printJsonSettings(settings_string);
-  }
+  if (ok && !spec)
+    this->printJsonSettings(settings_string);
 
-  return true;
+  return ok;
 }
 
 void Settings::main(uint32_t currentTime) {

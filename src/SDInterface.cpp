@@ -240,7 +240,7 @@ void SDInterface::runUpdate() {
       Logger::log(STD_MSG, "rebooting...");
       display.tft->println("Complete. Rebooting...");
       delay(1000);
-      ESP.restart();
+      Settings::safeRestart();
     }
   }
   // File was not good
