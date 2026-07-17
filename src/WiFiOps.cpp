@@ -2638,7 +2638,7 @@ void WiFiOps::uploadAllPendingV2() {
     if (!this->tls_heap_guard && mgr.stats().ok >= 3) {
       Logger::log(GUD_MSG, "[UPLOAD] Heap low after " + String(mgr.stats().ok) + " uploads, rebooting to continue");
       delay(300);
-      ESP.restart();
+      Settings::safeRestart();
     }
   }
 
@@ -2706,7 +2706,7 @@ void WiFiOps::uploadAllPending() {
       if (!this->tls_heap_guard && made_progress) {
         Logger::log(GUD_MSG, "[UPLOAD] Heap low, rebooting to continue on clean heap");
         delay(300);
-        ESP.restart();
+        Settings::safeRestart();
       }
     }
   }
@@ -3420,7 +3420,7 @@ void WiFiOps::runDockMode(uint32_t currentTime) {
     case DOCK_STATE_CONNECTING:
       Logger::log(STD_MSG, "[DOCK] Trigger detected, rebooting into upload path");
       delay(50);
-      ESP.restart();
+      Settings::safeRestart();
       break;
     case DOCK_STATE_UPLOADING:
       this->handleDockUploading();

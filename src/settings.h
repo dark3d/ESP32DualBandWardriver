@@ -13,6 +13,9 @@
 
 #define FORMAT_SPIFFS_IF_FAILED true
 
+#define SETTINGS_TMP_FILE "/settings.tmp"
+#define SETTINGS_BAK_FILE "/settings.bak"
+
 #define CLICK_NAME "Click"
 #define ALARM_NAME "Alarm"
 #define VIBE_NAME  "Vibration"
@@ -43,8 +46,17 @@ class Settings {
   private:
     String json_settings_string;
 
+    static volatile bool write_in_flight;
+
+    static bool settingsBlobValid(const String &blob);
+    static bool readSettingsFile(const char *path, String &out);
+    bool writeSettingsBlob(const String &blob);
+
   public:
     bool begin();
+
+    static bool isWriteInFlight();
+    static void safeRestart();
 
     template <typename T>
     T loadSetting(String name);
