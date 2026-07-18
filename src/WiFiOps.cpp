@@ -104,6 +104,7 @@ struct promisc_ap_t {
 
 static QueueHandle_t g_ap_queue = nullptr;
 static const uint16_t AP_QUEUE_LEN = 96;
+static const uint32_t BLE_SCAN_INTERVAL_MS = 2000;
 
 static void promiscuous_rx_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
   if (type != WIFI_PKT_MGMT || g_ap_queue == nullptr) return;
@@ -154,6 +155,10 @@ class scanCallbacks : public NimBLEScanCallbacks {
     extern WiFiOps wifi_ops;
 
     uint8_t macBytes[6];
+
+    Serial.printf("[BLEDBG] onDiscovered mode=%d gpsmod=%d sd=%d fix=%d buf=%d\n",
+                  wifi_ops.run_mode, (int)gps.getGpsModuleStatus(), (int)sd_obj.supported,
+                  (int)wifi_ops.effectiveFix(), (int)wifi_ops.isGpsBufferingEnabled());
 
     if (wifi_ops.run_mode == SOLO_MODE) {
       // Only a fix WITH a timestamp can be stamped live; otherwise buffer (so a
@@ -1387,10 +1392,11 @@ uint32_t WiFiOps::getCurrentBLECount() {
 }
 
 void WiFiOps::scanBLE() {
-  //Logger::log(STD_MSG, "Starting BLE scan...");
+  Serial.printf("[BLEDBG] scanBLE enter init=%d scanning=%d\n",
+                this->ble_initialized, pBLEScan ? (int)pBLEScan->isScanning() : -1);
   pBLEScan->clearResults();
-  pBLEScan->start(BLE_SCAN_DURATION, false, false);
-  //Logger::log(STD_MSG, "Completed BLE scan");
+  bool ok = pBLEScan->start(BLE_SCAN_DURATION, false, false);
+  Serial.printf("[BLEDBG] scanBLE start=%d scanning=%d\n", (int)ok, (int)pBLEScan->isScanning());
 }
 
 int WiFiOps::runWardrive(uint32_t currentTime) {
@@ -1975,10 +1981,19 @@ void WiFiOps::stopPromiscuousCapture() {
   if (!this->promisc_started) return;
   esp_wifi_set_promiscuous(false);
   esp_wifi_set_promiscuous_rx_cb(nullptr);
+  esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
   this->promisc_started = false;
 }
 
 void WiFiOps::runPromiscuousSolo(uint32_t currentTime) {
+  if (millis() - this->last_ble_ms >= BLE_SCAN_INTERVAL_MS) {
+    this->last_ble_ms = millis();
+    this->stopPromiscuousCapture();
+    this->scanBLE();
+    while (pBLEScan->isScanning())
+      delay(1);
+  }
+
   this->startPromiscuousCapture();
 
   if (this->dwell_idx == 0) {
@@ -2048,11 +2063,6 @@ void WiFiOps::runPromiscuousSolo(uint32_t currentTime) {
     }
   }
   this->trig_found_sweep = false;
-
-  this->stopPromiscuousCapture();
-  this->scanBLE();
-  while (pBLEScan->isScanning())
-    delay(1);
 }
 
 static inline uint32_t bloom_hash_a(const unsigned char* mac) {

@@ -211,6 +211,7 @@ class WiFiOps
     bool     promisc_started    = false;
     uint16_t dwell_idx          = 0;
     bool     trig_found_sweep   = false;
+    uint32_t last_ble_ms        = 0;
     static uint16_t dwellForChannel(uint8_t ch);
     void shutdownAccessPoint(bool ap_active = true);
     bool isSSIDExcluded(const String& ssid, const String* list, int count); // Chunk 4
