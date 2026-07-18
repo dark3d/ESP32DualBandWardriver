@@ -16,9 +16,7 @@ void UI::begin() {
   upload_all_menu.name = "Upload All?";
   mark_geofence_menu.name = "Mark Geofence Center?";
 
-  #ifndef FORCE_WARDRIVE
   this->buildSDFileMenu();
-  #endif
 
   action_menu.parentMenu = &sd_file_menu;
   mode_menu.parentMenu   = &sd_file_menu;

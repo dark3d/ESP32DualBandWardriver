@@ -24,15 +24,13 @@
 #define JCMK_HOST_BOARD
 
 //// Firmware info stuff
-#define FIRMWARE_VERSION "v2.3.0+dark3d.4"
+#define FIRMWARE_VERSION "v2.3.0+dark3d.5"
 #define DEVICE_NAME      "JCMK C5 Wardriver"
 
 //// Role stuff
 #define SOLO
 // #define CORE
 // #define NODE
-
-// #define FORCE_WARDRIVE
 
 #if !defined(SOLO) && !defined(CORE) && !defined(NODE)
   #error "Define exactly one role: SOLO, CORE, or NODE"

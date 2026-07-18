@@ -156,12 +156,6 @@ class scanCallbacks : public NimBLEScanCallbacks {
 
     uint8_t macBytes[6];
 
-    #ifdef FORCE_WARDRIVE
-    Serial.printf("[BLEDBG] onDiscovered mode=%d gpsmod=%d sd=%d fix=%d buf=%d\n",
-                  wifi_ops.run_mode, (int)gps.getGpsModuleStatus(), (int)sd_obj.supported,
-                  (int)wifi_ops.effectiveFix(), (int)wifi_ops.isGpsBufferingEnabled());
-    #endif
-
     if (wifi_ops.run_mode == SOLO_MODE) {
       // Only a fix WITH a timestamp can be stamped live; otherwise buffer (so a
       // fix-but-no-datetime hit gets a reconstructed FirstSeen on backfill,
@@ -1394,16 +1388,8 @@ uint32_t WiFiOps::getCurrentBLECount() {
 }
 
 void WiFiOps::scanBLE() {
-  #ifdef FORCE_WARDRIVE
-  Serial.printf("[BLEDBG] scanBLE enter init=%d scanning=%d\n",
-                this->ble_initialized, pBLEScan ? (int)pBLEScan->isScanning() : -1);
-  #endif
   pBLEScan->clearResults();
-  bool ok = pBLEScan->start(BLE_SCAN_DURATION, false, false);
-  (void)ok;
-  #ifdef FORCE_WARDRIVE
-  Serial.printf("[BLEDBG] scanBLE start=%d scanning=%d\n", (int)ok, (int)pBLEScan->isScanning());
-  #endif
+  pBLEScan->start(BLE_SCAN_DURATION, false, false);
 }
 
 int WiFiOps::runWardrive(uint32_t currentTime) {
@@ -1466,15 +1452,10 @@ int WiFiOps::runWardrive(uint32_t currentTime) {
     }
   }
   else if (this->run_mode == SOLO_MODE) {
-    #ifdef FORCE_WARDRIVE
-    this->gps_buffering_enabled = true;
-    this->runPromiscuousSolo(currentTime);
-    #else
     if (gps.getGpsModuleStatus() && sd_obj.supported &&
         (gps.getFixStatus() || this->gps_buffering_enabled)) {
       this->runPromiscuousSolo(currentTime);
     }
-    #endif
   }
 
   return scan_status;
@@ -2052,7 +2033,6 @@ void WiFiOps::runPromiscuousSolo(uint32_t currentTime) {
 
   this->dwell_idx = 0;
 
-  #ifndef FORCE_WARDRIVE
   if (!trigSSID.isEmpty()) {
     if (this->trig_found_sweep && !rtc_dock_done) {
       Logger::log(STD_MSG, "[DOCK] Trigger SSID detected in capture: " + trigSSID);
@@ -2079,7 +2059,6 @@ void WiFiOps::runPromiscuousSolo(uint32_t currentTime) {
       }
     }
   }
-  #endif
   this->trig_found_sweep = false;
 }
 
@@ -3579,9 +3558,6 @@ void WiFiOps::showCountdown() {
 }
 
 bool WiFiOps::begin(bool skip_admin, int mode_override) {
-  #ifdef FORCE_WARDRIVE
-  skip_admin = true;
-  #endif
   this->current_scan_mode = WIFI_STANDBY;
 
   esp_reset_reason_t reset_reason = esp_reset_reason();
@@ -4032,14 +4008,6 @@ void WiFiOps::departDock() {
 // ============================================================
 
 void WiFiOps::main(uint32_t currentTime, bool in_sd_files) {
-  #ifdef FORCE_WARDRIVE
-  this->dock_state = DOCK_STATE_NONE;
-  this->current_scan_mode = WIFI_WARDRIVING;
-  this->gps_buffering_enabled = true;
-  this->runWardrive(currentTime);
-  return;
-  #endif
-
   // Chunk 6: dock mode takes priority over normal wardrive cycle
   if (this->dock_state != DOCK_STATE_NONE) {
     this->runDockMode(currentTime);
