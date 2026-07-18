@@ -147,7 +147,7 @@
 
 
 ////WiFi stuff
-#define BLOOM_BITS   98304
+#define BLOOM_BITS   49152
 #define BLOOM_BYTES  (BLOOM_BITS / 8)
 #define BLOOM_HASHES 7
 #define CHANNEL_TIMER 80

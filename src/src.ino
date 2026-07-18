@@ -11,7 +11,7 @@
 #include "ui.h"
 #include "logger.h"
 
-SET_LOOP_TASK_STACK_SIZE(16 * 1024);
+SET_LOOP_TASK_STACK_SIZE(12 * 1024);
 
 Buffer buffer;
 Settings settings;
