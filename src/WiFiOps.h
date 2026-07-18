@@ -202,6 +202,17 @@ class WiFiOps
     void clearMacHistory();
     String security_int_to_string(int security_type);
     void processWardrive(uint16_t networks);
+    void logWardriveAP(uint8_t* bssid_raw, const String& ssid, int channel, int rssi, int authtype);
+    void loadExclusionCache();
+    String excl_cache[MAX_SSID_EXCLUSIONS];
+    int    excl_cache_count = 0;
+    void runPromiscuousSolo(uint32_t currentTime);
+    void startPromiscuousCapture();
+    void stopPromiscuousCapture();
+    bool     promisc_started    = false;
+    uint16_t dwell_idx          = 0;
+    bool     trig_found_sweep   = false;
+    static uint16_t dwellForChannel(uint8_t ch);
     void shutdownAccessPoint(bool ap_active = true);
     bool isSSIDExcluded(const String& ssid, const String* list, int count); // Chunk 4
 

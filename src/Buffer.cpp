@@ -72,10 +72,6 @@ void Buffer::openFile(String file_name, fs::FS* fs, bool serial, bool is_pcap) {
   }
 }
 
-void Buffer::pcapOpen(String file_name, fs::FS* fs, bool serial) {
-  openFile(file_name, fs, serial, true);
-}
-
 void Buffer::logOpen(String file_name, fs::FS* fs, bool serial) {
   openFile(file_name, fs, serial, false);
 }
@@ -110,13 +106,6 @@ void Buffer::add(const uint8_t* buf, uint32_t len, bool is_pcap){
   }
   
   write(buf, len); // packet payload
-}
-
-void Buffer::append(wifi_promiscuous_pkt_t *packet, int len) {
-  bool save_packet = settings.loadSetting<bool>("SavePCAP");
-  if (save_packet) {
-    add(packet->payload, len, true);
-  }
 }
 
 void Buffer::append(String log) {

@@ -2,7 +2,10 @@
 #include "BatteryInterface.h"
 #include "esp_task_wdt.h"
 #include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 
+extern WiFiOps wifi_ops;
 extern BatteryInterface battery;
 extern bool g_force_display_redraw;
 
@@ -90,6 +93,62 @@ enum MsgType : uint8_t {
 };
 
 WebServer server(80);
+
+// Promiscuous-capture hand-off: the RX callback runs in the WiFi task and must
+// not touch SD / String / the log buffer, so it parses each mgmt frame into this
+// POD and pushes it to a queue the main loop drains.
+struct promisc_ap_t {
+  uint8_t bssid[6];
+  char    ssid[33];
+  uint8_t channel;
+  int8_t  rssi;
+  uint8_t auth;
+};
+
+static QueueHandle_t g_ap_queue = nullptr;
+static const uint16_t AP_QUEUE_LEN = 96;
+
+static void promiscuous_rx_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
+  if (type != WIFI_PKT_MGMT || g_ap_queue == nullptr) return;
+
+  const wifi_promiscuous_pkt_t *ppkt = (const wifi_promiscuous_pkt_t *)buf;
+  const uint8_t *frame = ppkt->payload;
+  const uint16_t len = ppkt->rx_ctrl.sig_len;
+
+  if (frame == nullptr || len < 36) return;
+
+  const uint8_t fc0 = frame[0];
+  if (((fc0 >> 2) & 0x03) != 0) return;              // management frames only
+  const uint8_t subtype = (fc0 >> 4) & 0x0F;
+  if (subtype != 8 && subtype != 5) return;          // beacon (0x08) / probe-resp (0x05)
+
+  promisc_ap_t r;
+  memcpy(r.bssid, frame + 16, 6);                    // addr3 = BSSID
+  r.rssi    = ppkt->rx_ctrl.rssi;
+  r.channel = ppkt->rx_ctrl.channel;
+  r.auth    = (uint8_t)wifi_ops.getAuthType(ppkt);
+  r.ssid[0] = '\0';
+
+  const uint8_t *ies = frame + 36;
+  size_t ies_len = (size_t)len - 36;
+  while (ies_len >= 2) {
+    const uint8_t id = ies[0];
+    const uint8_t elen = ies[1];
+    if (ies_len < (size_t)(2 + elen)) break;
+    if (id == 0) {                                   // SSID
+      const uint8_t n = elen > 32 ? 32 : elen;
+      memcpy(r.ssid, ies + 2, n);
+      r.ssid[n] = '\0';
+    } else if (id == 3 && elen >= 1) {               // DS parameter set = channel
+      r.channel = ies[2];
+    }
+    ies += (2 + elen);
+    ies_len -= (2 + elen);
+  }
+
+  BaseType_t hpw = pdFALSE;
+  xQueueSendFromISR(g_ap_queue, &r, &hpw);           // non-blocking; drops if full
+}
 
 
 class scanCallbacks : public NimBLEScanCallbacks {
@@ -1362,96 +1421,50 @@ int WiFiOps::runWardrive(uint32_t currentTime) {
   }
   // ---- end geofence check ----
 
-  if ((this->run_mode == SOLO_MODE) || (this->run_mode == NODE_MODE)) {
+  if (this->run_mode == NODE_MODE) {
 
-    // Check GPS status
-    if ((this->run_mode == NODE_MODE) ||
-        (gps.getGpsModuleStatus() && sd_obj.supported &&
-         (gps.getFixStatus() || this->gps_buffering_enabled))) {
+    scan_status = WiFi.scanComplete();
 
-      scan_status = WiFi.scanComplete();
+    // Pause if scan is running already
+    if (scan_status == WIFI_SCAN_RUNNING) // Scan is still running
+      delay(1);
+    else if (scan_status == WIFI_SCAN_FAILED) { // Scan is failed or not started
+      this->startNextNodeAssignedScan();
+      delay(100);
+      if (WiFi.scanComplete() == WIFI_SCAN_FAILED)
+        Logger::log(WARN_MSG, "WiFi scan failed to start!");
+    }
+    else {
+      this->current_net_count = 0;
+      this->current_ble_count = 0;
+      this->current_2g4_count = 0;
+      this->current_5g_count = 0;
 
-      // Pause if scan is running already
-      if (scan_status == WIFI_SCAN_RUNNING) // Scan is still running
+      // Scan has completed and is number of networks found
+      // Handle the scan results
+      this->processWardrive(scan_status);
+
+      // Delete the scan data
+      WiFi.scanDelete();
+
+      // Scan BLE here
+      if (current_assigned_scan_idx == assigned_start_idx)
+        this->scanBLE();
+
+      while(pBLEScan->isScanning())
         delay(1);
-      else if (scan_status == WIFI_SCAN_FAILED) { // Scan is failed or not started
-        if (this->run_mode == NODE_MODE)
-          this->startNextNodeAssignedScan();
-        else
-          WiFi.scanNetworks(true, true, false, CHANNEL_TIMER);
-        delay(100);
-        if (WiFi.scanComplete() == WIFI_SCAN_FAILED)
-          Logger::log(WARN_MSG, "WiFi scan failed to start!");
-      }
-      else {
-        // ---- Chunk 6: check for trigger SSID in scan results ----
-        // Do this BEFORE processWardrive so we can abort gracefully
-        // if we need to switch to dock mode.
-        String trigSSID = settings.loadSetting<String>(TRIGGER_SSID_NAME);
-        if (!trigSSID.isEmpty()) {
-          bool trig_found = false;
-          for (int j = 0; j < scan_status; j++) {
-            if (WiFi.SSID(j) == trigSSID) {
-              trig_found = true;
-              break;
-            }
-          }
 
-          if (trig_found && !rtc_dock_done) {
-            Logger::log(STD_MSG, "[DOCK] Trigger SSID detected in scan: " + trigSSID);
-            WiFi.scanDelete();
-            this->dock_state            = DOCK_STATE_CONNECTING;
-            this->dock_connect_attempts = 0;
-            return scan_status; // main() will call runDockMode next cycle
-          }
+      if (current_assigned_scan_idx == assigned_start_idx)
+        this->runAdminWindowAfterScanCycle();
 
-          if (rtc_dock_done) {
-            if (trig_found) {
-              this->dock_rearm_absent = 0;
-            } else if (currentTime - this->dock_rearm_last_check >= DOCK_SCAN_INTERVAL) {
-              this->dock_rearm_last_check = currentTime;
-              this->dock_rearm_absent++;
-              Logger::log(STD_MSG, "[DOCK] Trigger absent while docked (" +
-                          String(this->dock_rearm_absent) + "/" +
-                          String(DOCK_DEPART_SCANS) + ")");
-              if (this->dock_rearm_absent >= DOCK_DEPART_SCANS) {
-                rtc_dock_done = false;
-                this->dock_rearm_absent = 0;
-                Logger::log(STD_MSG, "[DOCK] Departed — dock re-armed");
-              }
-            }
-          }
-        }
-        // ---- end trigger SSID check ----
-
-        this->current_net_count = 0;
-        this->current_ble_count = 0;
-        this->current_2g4_count = 0;
-        this->current_5g_count = 0;
-
-        // Scan has completed and is number of networks found
-        // Handle the scan results
-        this->processWardrive(scan_status);
-
-        // Delete the scan data
-        WiFi.scanDelete();
-
-        // Scan BLE here
-        if (current_assigned_scan_idx == assigned_start_idx)
-          this->scanBLE();
-
-        while(pBLEScan->isScanning())
-          delay(1);
-
-        if ((this->run_mode == NODE_MODE) && (current_assigned_scan_idx == assigned_start_idx))
-          this->runAdminWindowAfterScanCycle();
-
-        // Start a new scan on all channels
-        if (this->run_mode == NODE_MODE)
-          this->startNextNodeAssignedScan();
-        else
-          WiFi.scanNetworks(true, true, false, CHANNEL_TIMER);
-      }
+      // Start a new scan on the assigned channel range
+      this->startNextNodeAssignedScan();
+    }
+  }
+  else if (this->run_mode == SOLO_MODE) {
+    if (gps.getGpsModuleStatus() && sd_obj.supported &&
+        (gps.getFixStatus() || this->gps_buffering_enabled)) {
+      this->runPromiscuousSolo(currentTime);
     }
   }
 
@@ -1815,10 +1828,118 @@ void WiFiOps::bufferBleDetection(const String& address, int rssi) {
               String(this->pending_count) + ")");
 }
 
-void WiFiOps::processWardrive(uint16_t networks) {
-  String display_string;
-  bool do_save;
+// ---- Chunk 4: load exclusion list once per scan cycle ----
+// Doing this outside the network loop avoids re-parsing the
+// settings JSON for every scanned network.
+void WiFiOps::loadExclusionCache() {
+  this->excl_cache_count = 0;
+  for (int e = 0; e < MAX_SSID_EXCLUSIONS; e++) {
+    this->excl_cache[e] = settings.loadSetting<String>("sx_" + String(e));
+    if (!this->excl_cache[e].isEmpty()) this->excl_cache_count++;
+  }
+}
 
+void WiFiOps::logWardriveAP(uint8_t* bssid_raw, const String& ssid_in, int channel, int rssi, int authtype) {
+  if (this->seen_mac(bssid_raw))
+    return;
+
+  char this_bssid[18] = {0};
+  sprintf(this_bssid, "%02X:%02X:%02X:%02X:%02X:%02X", bssid_raw[0], bssid_raw[1], bssid_raw[2], bssid_raw[3], bssid_raw[4], bssid_raw[5]);
+  String bssid_str = this_bssid;
+
+  if (this->run_mode == SOLO_MODE) {
+    digitalWrite(LED_PIN, HIGH);
+
+    String ssid = ssid_in;
+    ssid.replace(",","_");
+
+    if (this->excl_cache_count > 0 &&
+        this->isSSIDExcluded(ssid, this->excl_cache, MAX_SSID_EXCLUSIONS)) {
+      Logger::log(STD_MSG, "[EXCL] Skipping excluded SSID: \"" + ssid + "\"");
+      digitalWrite(LED_PIN, LOW);
+      return;
+    }
+
+    this->setCurrentNetCount(this->getCurrentNetCount() + 1);
+    this->setTotalNetCount(this->getTotalNetCount() + 1);
+
+    if (channel > 14)
+      this->setCurrent5gCount(this->getCurrent5gCount() + 1);
+    else
+      this->setCurrent2g4Count(this->getCurrent2g4Count() + 1);
+
+    String display_string = "";
+    if (ssid != "") {
+      display_string.concat(ssid);
+    }
+    else {
+      display_string.concat(bssid_str);
+    }
+
+    bool do_save = false;
+    if (this->effectiveFix()) {
+      do_save = !gps.getDatetime().isEmpty();
+      display_string.concat(" | Lt: " + gps.getLat());
+      display_string.concat(" | Ln: " + gps.getLon());
+    }
+    else {
+      if (this->gps_buffering_enabled) {
+        String pend = String(millis()) + "," + bssid_str + "," + ssid + "," +
+                      this->security_int_to_string(authtype) + "," +
+                      (String)channel + "," + (String)rssi + ",WIFI";
+        this->bufferPendingDetection(pend);
+        this->save_mac(bssid_raw);
+        this->pending_count++;
+        display_string.concat(" | GPS: No Fix [BUF:" + String(this->pending_count) + "]");
+      }
+      else {
+        display_string.concat(" | GPS: No Fix");
+      }
+    }
+
+    int temp_len = display_string.length();
+
+    #ifdef HAS_SCREEN
+      for (int k = 0; k < 40 - temp_len; k++)
+      {
+        display_string.concat(" ");
+      }
+
+      //display_obj.display_buffer->add(display_string);
+    #endif
+
+    String wardrive_line = bssid_str + "," + ssid + "," + this->security_int_to_string(authtype) + "," + gps.getDatetime() + "," + (String)channel + "," + (String)rssi + "," + gps.getLat() + "," + gps.getLon() + "," + gps.getAlt() + "," + gps.getAccuracy() + ",WIFI";
+    Logger::log(GUD_MSG, (String)this->mac_history_cursor + " | " + wardrive_line);
+
+    digitalWrite(LED_PIN, LOW);
+
+    if (do_save) {
+      this->save_mac(bssid_raw);
+      buffer.append(wardrive_line + "\n");
+    }
+  }
+  else if (this->run_mode == NODE_MODE) {
+    this->save_mac(bssid_raw);
+    String ssid = ssid_in;
+    ssid.replace(",","_");
+
+    // ---- Chunk 4: exclusion filter for NODE_MODE too ----
+    if (this->excl_cache_count > 0 &&
+        this->isSSIDExcluded(ssid, this->excl_cache, MAX_SSID_EXCLUSIONS)) {
+      Logger::log(STD_MSG, "[EXCL] Node skipping excluded SSID: \"" + ssid + "\"");
+      return;
+    }
+
+    String enow_line = bssid_str + "," + ssid + "," + this->security_int_to_string(authtype) + "," + (String)channel + "," + (String)rssi + ",W";
+    Logger::log(GUD_MSG, (String)this->mac_history_cursor + " | " + enow_line);
+    if (this->use_encryption)
+      this->sendEncryptedStringToCore(enow_line);
+    else
+      this->sendBroadcastStringPlain(enow_line);
+  }
+}
+
+void WiFiOps::processWardrive(uint16_t networks) {
   if (this->effectiveFix() && !gps.getDatetime().isEmpty()) {
     if (this->gps_buffering_enabled)
       this->backfillPending();
@@ -1828,127 +1949,131 @@ void WiFiOps::processWardrive(uint16_t networks) {
     this->have_last_fix   = true;
   }
 
-  // ---- Chunk 4: load exclusion list once per scan cycle ----
-  // Doing this outside the network loop avoids re-parsing the
-  // settings JSON for every scanned network.
-  String exclusions[MAX_SSID_EXCLUSIONS];
-  int exclusion_count = 0;
-  for (int e = 0; e < MAX_SSID_EXCLUSIONS; e++) {
-    exclusions[e] = settings.loadSetting<String>("sx_" + String(e));
-    if (!exclusions[e].isEmpty()) exclusion_count++;
-  }
+  this->loadExclusionCache();
 
   // Process results if networks found
   if (networks > 0) {
     for (int i = 0; i < networks; i++) {
-      if (this->run_mode == SOLO_MODE)
-        digitalWrite(LED_PIN, HIGH);
-      display_string = "";
-      do_save = false;
-      uint8_t *this_bssid_raw = WiFi.BSSID(i);
-      char this_bssid[18] = {0};
-      sprintf(this_bssid, "%02X:%02X:%02X:%02X:%02X:%02X", this_bssid_raw[0], this_bssid_raw[1], this_bssid_raw[2], this_bssid_raw[3], this_bssid_raw[4], this_bssid_raw[5]);
-
-      if (this->seen_mac(this_bssid_raw))
-        continue;
-
-      if (this->run_mode == SOLO_MODE) {
-
-        // ---- Chunk 4: SSID exclusion check ----
-        // Pull SSID before the counters so excluded networks
-        // don't inflate the displayed scan count.
-        String ssid = WiFi.SSID(i);
-        ssid.replace(",","_");
-
-        if (exclusion_count > 0 &&
-            this->isSSIDExcluded(ssid, exclusions, MAX_SSID_EXCLUSIONS)) {
-          Logger::log(STD_MSG, "[EXCL] Skipping excluded SSID: \"" + ssid + "\"");
-          digitalWrite(LED_PIN, LOW);
-          continue;
-        }
-        // ---- end exclusion check ----
-
-        this->setCurrentNetCount(this->getCurrentNetCount() + 1);
-        this->setTotalNetCount(this->getTotalNetCount() + 1);
-
-        if (WiFi.channel(i) > 14)
-          this->setCurrent5gCount(this->getCurrent5gCount() + 1);
-        else
-          this->setCurrent2g4Count(this->getCurrent2g4Count() + 1);
-
-        if (ssid != "") {
-          display_string.concat(ssid);
-        }
-        else {
-          display_string.concat(this_bssid);
-        }
-
-        if (this->effectiveFix()) {
-          do_save = !gps.getDatetime().isEmpty();
-          display_string.concat(" | Lt: " + gps.getLat());
-          display_string.concat(" | Ln: " + gps.getLon());
-        }
-        else {
-          if (this->gps_buffering_enabled) {
-            String pend = String(millis()) + "," + WiFi.BSSIDstr(i) + "," + ssid + "," +
-                          this->security_int_to_string(WiFi.encryptionType(i)) + "," +
-                          (String)WiFi.channel(i) + "," + (String)WiFi.RSSI(i) + ",WIFI";
-            this->bufferPendingDetection(pend);
-            this->save_mac(this_bssid_raw);
-            this->pending_count++;
-            display_string.concat(" | GPS: No Fix [BUF:" + String(this->pending_count) + "]");
-          }
-          else {
-            display_string.concat(" | GPS: No Fix");
-          }
-        }
-
-        int temp_len = display_string.length();
-
-        #ifdef HAS_SCREEN
-          for (int i = 0; i < 40 - temp_len; i++)
-          {
-            display_string.concat(" ");
-          }
-          
-          //display_obj.display_buffer->add(display_string);
-        #endif
-
-        String wardrive_line = WiFi.BSSIDstr(i) + "," + ssid + "," + this->security_int_to_string(WiFi.encryptionType(i)) + "," + gps.getDatetime() + "," + (String)WiFi.channel(i) + "," + (String)WiFi.RSSI(i) + "," + gps.getLat() + "," + gps.getLon() + "," + gps.getAlt() + "," + gps.getAccuracy() + ",WIFI";
-        Logger::log(GUD_MSG, (String)this->mac_history_cursor + " | " + wardrive_line);
-
-        if (this->run_mode == SOLO_MODE)
-          digitalWrite(LED_PIN, LOW);
-
-        if (do_save) {
-          this->save_mac(this_bssid_raw);
-          buffer.append(wardrive_line + "\n");
-        }
-      }
-      else if (this->run_mode == NODE_MODE) {
-        this->save_mac(this_bssid_raw);
-        String ssid = WiFi.SSID(i);
-        ssid.replace(",","_");
-
-        // ---- Chunk 4: exclusion filter for NODE_MODE too ----
-        if (exclusion_count > 0 &&
-            this->isSSIDExcluded(ssid, exclusions, MAX_SSID_EXCLUSIONS)) {
-          Logger::log(STD_MSG, "[EXCL] Node skipping excluded SSID: \"" + ssid + "\"");
-          continue;
-        }
-
-        String enow_line = WiFi.BSSIDstr(i) + "," + ssid + "," + this->security_int_to_string(WiFi.encryptionType(i)) + "," + (String)WiFi.channel(i) + "," + (String)WiFi.RSSI(i) + ",W";
-        Logger::log(GUD_MSG, (String)this->mac_history_cursor + " | " + enow_line);
-        if (this->use_encryption)
-          this->sendEncryptedStringToCore(enow_line);
-        else
-          this->sendBroadcastStringPlain(enow_line);
-      }
+      this->logWardriveAP(WiFi.BSSID(i), WiFi.SSID(i), WiFi.channel(i), WiFi.RSSI(i), WiFi.encryptionType(i));
     }
   }
 
   if (this->run_mode == SOLO_MODE)
     digitalWrite(LED_PIN, LOW);
+}
+
+// Per-channel dwell weighting: camp longest on the busy 2.4 GHz channels
+// (1/6/11) and the popular 5 GHz UNII-1/UNII-3 blocks, sweep the rest quickly.
+uint16_t WiFiOps::dwellForChannel(uint8_t ch) {
+  if (ch == 1 || ch == 6 || ch == 11) return 200;       // 2.4 GHz busy channels
+  if (ch <= 14) return 40;                               // other 2.4 GHz
+  if ((ch >= 36 && ch <= 48) || (ch >= 149 && ch <= 165)) return 100; // UNII-1 / UNII-3
+  return 40;                                             // DFS / other 5 GHz
+}
+
+void WiFiOps::startPromiscuousCapture() {
+  if (this->promisc_started) return;
+
+  if (g_ap_queue == nullptr)
+    g_ap_queue = xQueueCreate(AP_QUEUE_LEN, sizeof(promisc_ap_t));
+
+  esp_wifi_set_ps(WIFI_PS_NONE);
+
+  wifi_promiscuous_filter_t filt = {};
+  filt.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;
+  esp_wifi_set_promiscuous_filter(&filt);
+  esp_wifi_set_promiscuous_rx_cb(&promiscuous_rx_cb);
+  esp_wifi_set_promiscuous(true);
+
+  this->promisc_started = true;
+}
+
+void WiFiOps::stopPromiscuousCapture() {
+  if (!this->promisc_started) return;
+  esp_wifi_set_promiscuous(false);
+  esp_wifi_set_promiscuous_rx_cb(nullptr);
+  this->promisc_started = false;
+}
+
+// One dwell step of the SOLO capture engine: camp on the next channel, let the
+// RX callback fill the queue for the channel's weighted dwell, then drain it
+// through the shared log path. BLE and the dock trigger check run once per sweep.
+void WiFiOps::runPromiscuousSolo(uint32_t currentTime) {
+  this->startPromiscuousCapture();
+
+  if (this->dwell_idx == 0) {
+    this->current_net_count = 0;
+    this->current_ble_count = 0;
+    this->current_2g4_count = 0;
+    this->current_5g_count = 0;
+    this->trig_found_sweep = false;
+
+    if (this->effectiveFix() && !gps.getDatetime().isEmpty()) {
+      if (this->gps_buffering_enabled)
+        this->backfillPending();
+      this->last_fix_lat    = gps.getLat().toDouble();
+      this->last_fix_lon    = gps.getLon().toDouble();
+      this->last_fix_millis = millis();
+      this->have_last_fix   = true;
+    }
+  }
+
+  uint8_t ch = scan_channels[this->dwell_idx];
+  esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+
+  // Beacons / probe-responses arrive asynchronously into g_ap_queue while we wait.
+  delay(WiFiOps::dwellForChannel(ch));
+
+  this->loadExclusionCache();
+
+  String trigSSID = settings.loadSetting<String>(TRIGGER_SSID_NAME);
+
+  promisc_ap_t r;
+  while (xQueueReceive(g_ap_queue, &r, 0) == pdTRUE) {
+    String ssid = String(r.ssid);
+    if (!trigSSID.isEmpty() && ssid == trigSSID)
+      this->trig_found_sweep = true;
+    this->logWardriveAP(r.bssid, ssid, (int)r.channel, (int)r.rssi, (int)r.auth);
+  }
+
+  this->dwell_idx++;
+  if (this->dwell_idx < NUM_SCAN_CHANNELS)
+    return;
+
+  // ---- End of a full sweep: dock trigger handling + BLE ----
+  this->dwell_idx = 0;
+
+  if (!trigSSID.isEmpty()) {
+    if (this->trig_found_sweep && !rtc_dock_done) {
+      Logger::log(STD_MSG, "[DOCK] Trigger SSID detected in capture: " + trigSSID);
+      this->dock_state            = DOCK_STATE_CONNECTING;
+      this->dock_connect_attempts = 0;
+      this->trig_found_sweep      = false;
+      return; // main() will call runDockMode next cycle
+    }
+
+    if (rtc_dock_done) {
+      if (this->trig_found_sweep) {
+        this->dock_rearm_absent = 0;
+      } else if (currentTime - this->dock_rearm_last_check >= DOCK_SCAN_INTERVAL) {
+        this->dock_rearm_last_check = currentTime;
+        this->dock_rearm_absent++;
+        Logger::log(STD_MSG, "[DOCK] Trigger absent while docked (" +
+                    String(this->dock_rearm_absent) + "/" +
+                    String(DOCK_DEPART_SCANS) + ")");
+        if (this->dock_rearm_absent >= DOCK_DEPART_SCANS) {
+          rtc_dock_done = false;
+          this->dock_rearm_absent = 0;
+          Logger::log(STD_MSG, "[DOCK] Departed — dock re-armed");
+        }
+      }
+    }
+  }
+  this->trig_found_sweep = false;
+
+  this->scanBLE();
+  while (pBLEScan->isScanning())
+    delay(1);
 }
 
 bool WiFiOps::mac_cmp(struct mac_addr addr1, struct mac_addr addr2) {
@@ -2110,6 +2235,7 @@ void WiFiOps::initWiFi(bool set_country) {
 }
 
 void WiFiOps::deinitWiFi() {
+  this->stopPromiscuousCapture();
   WiFi.disconnect(true, true);
   WiFi.mode(WIFI_OFF);
 
@@ -3607,6 +3733,10 @@ bool WiFiOps::begin(bool skip_admin, int mode_override) {
 bool WiFiOps::scanForTriggerSSID() {
   String trigSSID = settings.loadSetting<String>(TRIGGER_SSID_NAME);
   if (trigSSID.isEmpty()) return false;
+
+  // A synchronous scan and promiscuous capture can't share the radio — drop
+  // promiscuous first (re-armed lazily by runPromiscuousSolo next dwell).
+  this->stopPromiscuousCapture();
 
   // Don't interrupt a running async scan — skip this cycle
   if (WiFi.scanComplete() == WIFI_SCAN_RUNNING) return false;
