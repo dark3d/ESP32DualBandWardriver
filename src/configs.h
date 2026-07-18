@@ -173,6 +173,8 @@
 #define DOCK_SCAN_INTERVAL     30 * 1000   // passive scan every 30s while docked
 #define DOCK_UI_REFRESH_MS     5 * 1000    // redraw docked screen (GPS/battery) every 5s
 #define DOCK_DEPART_SCANS      2           // consecutive misses before resuming wardrive
+#define DOCK_RSSI_MIN          -75         // reject trigger sightings weaker than this dBm before docking
+#define DOCK_ARM_SIGHTINGS     2           // consecutive qualifying sightings required to dock (transient debounce)
 #define DOCK_FAIL_DISPLAY_MS   20 * 1000   // show K1T failure message for 20s
 #define STANDBY_SCAN_INTERVAL  30 * 1000   // scan for K1T every 30s while in standby (no GPS)
 

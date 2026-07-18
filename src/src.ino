@@ -92,6 +92,9 @@ void setup() {
   Logger::enableSDLog(settings.loadSetting<bool>(DEBUG_LOG_NAME));
   bootBar(35);
 
+  // Move any legacy root upload markers into /sc/ before anything checks them
+  wifi_ops.migrateSidecars();
+
   // Capture boot-time button holds once (justPressed is edge-triggered).
   bool sel_held = c_btn.justPressed();
   int mode_override = 0;

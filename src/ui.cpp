@@ -8,6 +8,7 @@ void UI::begin() {
   delete_all_menu.list = new LinkedList<MenuNode>();
   upload_all_menu.list = new LinkedList<MenuNode>();
   mark_geofence_menu.list = new LinkedList<MenuNode>();
+  dock_menu.list = new LinkedList<MenuNode>();
 
   mode_menu.name   = "Mode";
   action_menu.name = "Action";
@@ -15,8 +16,39 @@ void UI::begin() {
   delete_all_menu.name = "Delete All?";
   upload_all_menu.name = "Upload All?";
   mark_geofence_menu.name = "Mark Geofence Center?";
+  dock_menu.name = "DOCK";
 
-  this->buildSDFileMenu();
+  // Nothing smaller than size 2 anywhere in the menu system (match CONFIG/DOCKED)
+  sd_file_menu.textSize       = 2;
+  mode_menu.textSize          = 2;
+  action_menu.textSize        = 2;
+  upload_menu.textSize        = 2;
+  delete_all_menu.textSize    = 2;
+  upload_all_menu.textSize    = 2;
+  mark_geofence_menu.textSize = 2;
+  dock_menu.textSize          = 2;
+
+  // Dock Menu (shown while docked, opened with SEL)
+  this->addNodes(&dock_menu, "Wardrive", ST77XX_WHITE, NULL, 0, [this]() {
+    wifi_ops.startWardrivingFromDock();
+    this->in_dock_menu = false;
+    this->current_menu = nullptr;
+    this->setDisplayMode(STATS_NEW);
+  });
+  this->addNodes(&dock_menu, "Delete Logs", ST77XX_WHITE, NULL, 0, [this]() {
+    this->ensureSDFileMenu();
+    this->current_menu = &sd_file_menu;
+    this->drawCurrentMenu();
+  });
+  this->addNodes(&dock_menu, "Resume Dock", ST77XX_WHITE, NULL, 0, [this]() {
+    this->in_dock_menu = false;
+    wifi_ops.dock_menu_open = false;
+    wifi_ops.dockScreenRefresh();
+    display.clearScreen();
+  });
+
+  // File menu is built lazily on first open (deferred off the boot path).
+  sd_file_menu.name = "Logs";
 
   action_menu.parentMenu = &sd_file_menu;
   mode_menu.parentMenu   = &sd_file_menu;
@@ -106,8 +138,8 @@ void UI::begin() {
       if (sd_obj.sd_files->get(i).startsWith("wardrive_") || sd_obj.sd_files->get(i).startsWith("wigle-")) {
         if (sd_obj.removeFile("/" + sd_obj.sd_files->get(i))) {
           Logger::log(STD_MSG, "Removed file: " + sd_obj.sd_files->get(i));
-          sd_obj.removeFile("/" + sd_obj.sd_files->get(i) + ".wdg");
-          sd_obj.removeFile("/" + sd_obj.sd_files->get(i) + ".wigle");
+          sd_obj.removeFile("/sc/" + sd_obj.sd_files->get(i) + ".wdg");
+          sd_obj.removeFile("/sc/" + sd_obj.sd_files->get(i) + ".wigle");
         }
         else {
           Logger::log(WARN_MSG, "Could not remove file: " + sd_obj.sd_files->get(i));
@@ -211,6 +243,8 @@ void UI::begin() {
 
     if (sd_obj.removeFile("/" + sd_obj.selected_file_name)) {
       Logger::log(STD_MSG, "Removed file: " + sd_obj.selected_file_name);
+      sd_obj.removeFile("/sc/" + sd_obj.selected_file_name + ".wdg");
+      sd_obj.removeFile("/sc/" + sd_obj.selected_file_name + ".wigle");
       display.clearScreen();
       display.drawCenteredText("File removed", true);
     } else {
@@ -603,6 +637,16 @@ void UI::setupSDFileList() {
 
 void UI::buildSDFileMenu() {
   if (sd_obj.supported) {
+    // Enumerating the SD card can take several seconds — show feedback so the
+    // screen doesn't look frozen while the directory is walked.
+    display.tft->setRotation(3);
+    display.tft->fillScreen(ST77XX_BLACK);
+    display.tft->setTextSize(2);
+    display.tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
+    display.tft->setCursor(0, 0);
+    display.tft->println("Loading");
+    display.tft->println("logs...");
+
     this->setupSDFileList();
 
     sd_file_menu.list->clear();
@@ -611,6 +655,11 @@ void UI::buildSDFileMenu() {
     sd_file_menu.name = "Logs";
 
     this->addNodes(&sd_file_menu, "Back", ST77XX_WHITE, NULL, 0, [this]() {
+      if (this->in_dock_menu && wifi_ops.isDocked()) {
+        this->current_menu = &dock_menu;
+        this->drawCurrentMenu();
+        return;
+      }
       this->setDisplayMode(STATS_NEW);
       if (buffer.getFileName() == "") {
         Logger::log(STD_MSG, "Active log file was deleted. Creating new one...");
@@ -620,7 +669,7 @@ void UI::buildSDFileMenu() {
       this->hard_refresh = true;
     });
 
-    this->addNodes(&sd_file_menu, "Delete Wardrive Logs", ST77XX_WHITE, NULL, 0, [this]() {
+    this->addNodes(&sd_file_menu, "Delete All", ST77XX_WHITE, NULL, 0, [this]() {
       this->current_menu = &delete_all_menu;
     });
 
@@ -628,7 +677,7 @@ void UI::buildSDFileMenu() {
       this->current_menu = &upload_all_menu;
     });
 
-    this->addNodes(&sd_file_menu, "Mark New Geofence", ST77XX_WHITE, NULL, 0, [this]() {
+    this->addNodes(&sd_file_menu, "Mark Geo", ST77XX_WHITE, NULL, 0, [this]() {
       this->current_menu = &mark_geofence_menu;
     });
 
@@ -637,10 +686,16 @@ void UI::buildSDFileMenu() {
     });
 
     for (int i = 0; i < sd_obj.sd_files->size(); i++) {
-      if (sd_obj.sd_files->get(i).startsWith("wardrive_") || sd_obj.sd_files->get(i).startsWith("wigle-")) {
+      String fname = sd_obj.sd_files->get(i);
+      if (fname.startsWith("wardrive_") || fname.startsWith("wigle-")) {
         uint32_t fsize = (sd_obj.sd_file_sizes && i < sd_obj.sd_file_sizes->size())
                            ? sd_obj.sd_file_sizes->get(i) : 0;
-        this->addNodes(&sd_file_menu, sd_obj.sd_files->get(i), ST77XX_WHITE, NULL, 0, [this, i]() {
+        // Strip the "wigle-" prefix + ".log" so the date/time is readable at the
+        // larger font; the full name is still used for selection.
+        String label = fname;
+        if (label.startsWith("wigle-")) label = label.substring(6);
+        if (label.endsWith(".log"))    label = label.substring(0, label.length() - 4);
+        this->addNodes(&sd_file_menu, label, ST77XX_WHITE, NULL, 0, [this, i]() {
           sd_obj.selected_file_name = sd_obj.sd_files->get(i);
           Logger::log(STD_MSG, sd_obj.sd_files->get(i) + " selected");
           this->current_menu = &action_menu;
@@ -649,9 +704,15 @@ void UI::buildSDFileMenu() {
     }
 
     Logger::log(STD_MSG, "Built SD file menu with " + (String)sd_obj.sd_files->size() + " files");
+    this->sd_menu_built = true;
   } else {
     Logger::log(WARN_MSG, "SD Card not detected. Skipping menu creation...");
   }
+}
+
+void UI::ensureSDFileMenu() {
+  if (!this->sd_menu_built)
+    this->buildSDFileMenu();
 }
 
 void UI::addNodes(Menu * menu, String name, uint8_t color, Menu * child, int place,
@@ -662,12 +723,16 @@ void UI::addNodes(Menu * menu, String name, uint8_t color, Menu * child, int pla
 void UI::drawCurrentMenu() {
   if (!current_menu || current_menu->list->size() == 0) return;
 
-  const uint8_t max_visible_items = 7;
-  const uint8_t header_height     = 8;
+  const uint8_t sz            = current_menu->textSize ? current_menu->textSize : 1;
+  const uint8_t char_h        = 8 * sz;
+  const uint8_t char_w        = 6 * sz;
+  const uint8_t header_height = char_h;
+  const uint8_t max_visible_items =
+      (sz == 1) ? 7 : ((TFT_HEIGHT - header_height) / char_h);
 
   display.tft->setRotation(3);
   display.tft->fillScreen(ST77XX_BLACK);
-  display.tft->setTextSize(1);
+  display.tft->setTextSize(sz);
   display.tft->setTextWrap(false);
 
   display.tft->setTextColor(ST77XX_WHITE);
@@ -684,7 +749,7 @@ void UI::drawCurrentMenu() {
     if (item_index >= current_menu->list->size()) break;
 
     MenuNode node = current_menu->list->get(item_index);
-    int y = header_height + i * 8;
+    int y = header_height + i * char_h;
 
     if (item_index == current_menu->selected) {
       display.tft->setTextColor(ST77XX_BLACK, ST77XX_WHITE);
@@ -697,23 +762,22 @@ void UI::drawCurrentMenu() {
     }
     display.tft->print(node.name);
 
-    String sizeStr = "";
-    if (node.fileSize > 0) {
-      sizeStr  = String((node.fileSize + 1023) / 1024);
-      sizeStr += " KB";
+    // The right-aligned KB size only fits alongside the name at size 1
+    if (sz == 1 && node.fileSize > 0) {
+      String sizeStr = String((node.fileSize + 1023) / 1024) + " KB";
+      int xRightAlign = TFT_WIDTH - sizeStr.length() * char_w;
+      display.tft->setCursor(xRightAlign, y);
+      display.tft->print(sizeStr);
     }
-    int xRightAlign = TFT_WIDTH - sizeStr.length() * 6;
-    display.tft->setCursor(xRightAlign, y);
-    display.tft->print(sizeStr);
   }
 
   if (current_menu->scroll_offset > 0) {
-    display.tft->setCursor(TFT_WIDTH - 10, header_height);
+    display.tft->setCursor(TFT_WIDTH - char_w - 2, header_height);
     display.tft->setTextColor(ST77XX_WHITE);
     display.tft->print("^");
   }
   if (current_menu->scroll_offset + max_visible_items < current_menu->list->size()) {
-    display.tft->setCursor(TFT_WIDTH - 10, header_height + (max_visible_items - 1) * 8);
+    display.tft->setCursor(TFT_WIDTH - char_w - 2, header_height + (max_visible_items - 1) * char_h);
     display.tft->setTextColor(ST77XX_WHITE);
     display.tft->print("v");
   }
@@ -763,9 +827,29 @@ void UI::main(uint32_t currentTime) {
     display.tft->fillScreen(ST77XX_BLACK);
   }
 
-  // Don't draw stats while docked — dock mode manages its own display
-  if (wifi_ops.isDocked())
+  // While docked, dock mode manages its own display. SEL opens the Dock Menu
+  // (Wardrive / Delete Logs / Resume Dock); the menu then owns the buttons.
+  if (wifi_ops.isDocked()) {
+    if (this->in_dock_menu) {
+      this->handleMenuNavigation();
+      return;
+    }
+    // Open on SEL, or automatically after a boot-dock handoff
+    if (c_btn.justPressed() || wifi_ops.dock_autoopen_menu) {
+      wifi_ops.dock_autoopen_menu = false;
+      this->in_dock_menu = true;
+      wifi_ops.dock_menu_open = true;
+      this->current_menu = &dock_menu;
+      this->drawCurrentMenu();
+    }
     return;
+  }
+
+  // Left the dock (e.g. Wardrive selected) while the menu flag was still set
+  if (this->in_dock_menu) {
+    this->in_dock_menu = false;
+    wifi_ops.dock_menu_open = false;
+  }
 
   bool in_stats = (this->stat_display_mode != SD_FILES);
 
@@ -857,8 +941,11 @@ void UI::main(uint32_t currentTime) {
       uint8_t next = (this->stat_display_mode >= MAX_DISPLAY_MODES - 1)
                        ? 0 : this->stat_display_mode + 1;
       this->setDisplayMode(next);
-      if (next == SD_FILES)
+      if (next == SD_FILES) {
+        this->ensureSDFileMenu();
+        this->current_menu = &sd_file_menu;
         this->drawCurrentMenu();
+      }
       else if (next == STATS_NEW)
         this->drawStatsNew(currentTime,
           wifi_ops.getCurrent2g4Count(), wifi_ops.getCurrent5gCount(),
@@ -875,8 +962,11 @@ void UI::main(uint32_t currentTime) {
       uint8_t next = (this->stat_display_mode == 0)
                        ? MAX_DISPLAY_MODES - 1 : this->stat_display_mode - 1;
       this->setDisplayMode(next);
-      if (next == SD_FILES)
+      if (next == SD_FILES) {
+        this->ensureSDFileMenu();
+        this->current_menu = &sd_file_menu;
         this->drawCurrentMenu();
+      }
       else if (next == STATS_NEW)
         this->drawStatsNew(currentTime,
           wifi_ops.getCurrent2g4Count(), wifi_ops.getCurrent5gCount(),

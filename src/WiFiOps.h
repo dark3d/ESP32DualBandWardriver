@@ -243,6 +243,11 @@ class WiFiOps
     uint32_t standby_scan_time     = 0; // for periodic K1T scan in standby (no GPS)
     bool     dock_webui_only       = false; // true = Tier 1 (web UI only, no GPS fix)
 
+    int      trigger_last_rssi     = -127; // best RSSI of trigger in last scanForTriggerSSID
+    int      trig_best_rssi_sweep  = -127; // best RSSI of trigger seen this promiscuous sweep
+    uint8_t  dock_arm_count        = 0;    // consecutive qualifying sightings (dock debounce)
+    bool     armDock(bool seen, int rssi); // debounce: true only after N strong sightings
+
     bool scanForTriggerSSID();    // synchronous passive scan for trigger SSID
     void runDockMode(uint32_t currentTime);
     void handleDockConnecting();
@@ -296,6 +301,11 @@ class WiFiOps
     void startLog(String file_name);
     int  logKeepCount();                        // configured "keep newest N logs" (clamped)
     void pruneOldLogs();                        // delete oldest fully-synced logs beyond N
+    void migrateSidecars();                     // one-time: move legacy root markers into /sc/
+    void startWardrivingFromDock();             // leave dock and resume wardriving (Dock Menu action)
+    bool dock_menu_open = false;                // UI dock menu is up — pause dock redraw/scan
+    bool dock_autoopen_menu = false;            // request UI to open the Dock Menu (boot handoff)
+    void dockScreenRefresh() { this->dock_last_ui_time = 0; }  // force DOCKED screen redraw next cycle
     void initBLE();
     void initWiFi(bool set_country = false);
     void deinitBLE();

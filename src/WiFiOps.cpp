@@ -1,5 +1,6 @@
 #include "WiFiOps.h"
 #include "BatteryInterface.h"
+#include "Switches.h"
 #include <algorithm>
 #include "esp_task_wdt.h"
 #include "esp_system.h"
@@ -9,6 +10,9 @@
 extern WiFiOps wifi_ops;
 extern BatteryInterface battery;
 extern bool g_force_display_redraw;
+extern Switches c_btn;
+
+static String scPath(const String& filePath, const String& service);
 
 // Survives ESP.restart() (reboot-to-upload dock path) but not a power cycle.
 // Set once the arrival's dock upload has drained; blocks re-docking until the
@@ -1408,8 +1412,9 @@ int WiFiOps::runWardrive(uint32_t currentTime) {
       if (millis() - this->geo_passive_scan_time >= DOCK_SCAN_INTERVAL) {
         this->geo_passive_scan_time = millis();
         //Logger::log(STD_MSG, "Calling scanForTriggerSSID from runWardrive");
-        if (!rtc_dock_done && this->scanForTriggerSSID()) {
-          Logger::log(STD_MSG, "[DOCK] Trigger SSID found during geofence pause");
+        bool seen = this->scanForTriggerSSID();
+        if (!rtc_dock_done && this->armDock(seen, this->trigger_last_rssi)) {
+          Logger::log(STD_MSG, "[DOCK] Trigger SSID confirmed during geofence pause");
           this->dock_state            = DOCK_STATE_CONNECTING;
           this->dock_connect_attempts = 0;
         }
@@ -1756,8 +1761,8 @@ void WiFiOps::pruneOldLogs() {
     if (!this->logFullySynced(path)) { kept_unsynced++; continue; }
 
     SD.remove(path);
-    SD.remove(path + ".wigle");
-    SD.remove(path + ".wdg");
+    SD.remove(scPath(path, "wigle"));
+    SD.remove(scPath(path, "wdg"));
     pruned++;
   }
 
@@ -2081,8 +2086,11 @@ void WiFiOps::runPromiscuousSolo(uint32_t currentTime) {
   promisc_ap_t r;
   while (xQueueReceive(g_ap_queue, &r, 0) == pdTRUE) {
     String ssid = String(r.ssid);
-    if (!trigSSID.isEmpty() && ssid == trigSSID)
+    if (!trigSSID.isEmpty() && ssid == trigSSID) {
       this->trig_found_sweep = true;
+      if ((int)r.rssi > this->trig_best_rssi_sweep)
+        this->trig_best_rssi_sweep = (int)r.rssi;
+    }
     this->logWardriveAP(r.bssid, ssid, (int)r.channel, (int)r.rssi, (int)r.auth);
   }
 
@@ -2093,11 +2101,13 @@ void WiFiOps::runPromiscuousSolo(uint32_t currentTime) {
   this->dwell_idx = 0;
 
   if (!trigSSID.isEmpty()) {
-    if (this->trig_found_sweep && !rtc_dock_done) {
-      Logger::log(STD_MSG, "[DOCK] Trigger SSID detected in capture: " + trigSSID);
+    if (!rtc_dock_done &&
+        this->armDock(this->trig_found_sweep, this->trig_best_rssi_sweep)) {
+      Logger::log(STD_MSG, "[DOCK] Trigger SSID confirmed (armed) — docking: " + trigSSID);
       this->dock_state            = DOCK_STATE_CONNECTING;
       this->dock_connect_attempts = 0;
       this->trig_found_sweep      = false;
+      this->trig_best_rssi_sweep  = -127;
       return;
     }
 
@@ -2119,6 +2129,7 @@ void WiFiOps::runPromiscuousSolo(uint32_t currentTime) {
     }
   }
   this->trig_found_sweep = false;
+  this->trig_best_rssi_sweep = -127;
 }
 
 static inline uint32_t bloom_hash_a(const unsigned char* mac) {
@@ -2638,16 +2649,26 @@ bool WiFiOps::wigleUpload(String filePath) {
 // Chunk 3: WDG Wars upload + sidecar tracking system
 // ============================================================
 
+// Upload-state markers live in /sc/ so the SD root holds only .log files —
+// keeps the file-menu directory walk fast. Marker for "/NAME.log" is
+// "/sc/NAME.log.<service>".
+static String scPath(const String& filePath, const String& service) {
+  String base = filePath;
+  if (base.startsWith("/")) base = base.substring(1);
+  return "/sc/" + base + "." + service;
+}
+
 // Check whether a service sidecar exists for a given log file.
 // service is "wigle" or "wdg".
 // filePath should include leading slash, e.g. "/wardrive.log"
 bool WiFiOps::sidecarExists(String filePath, String service) {
-  return SD.exists(filePath + "." + service);
+  return SD.exists(scPath(filePath, service));
 }
 
 // Write a sidecar file recording the upload timestamp.
 void WiFiOps::writeSidecar(String filePath, String service) {
-  String sidecarPath = filePath + "." + service;
+  if (!SD.exists("/sc")) SD.mkdir("/sc");
+  String sidecarPath = scPath(filePath, service);
   File f = SD.open(sidecarPath, FILE_WRITE);
   if (f) {
     f.println("uploaded=" + gps.getDatetime());
@@ -2656,6 +2677,36 @@ void WiFiOps::writeSidecar(String filePath, String service) {
   } else {
     Logger::log(WARN_MSG, "[UPLOAD] Could not write sidecar: " + sidecarPath);
   }
+}
+
+// One-time migration: move any legacy root sidecars into /sc/. Gated by a
+// marker so it only walks the root once.
+void WiFiOps::migrateSidecars() {
+  if (!sd_obj.supported) return;
+  if (SD.exists("/sc/.migrated")) return;
+
+  if (!SD.exists("/sc")) SD.mkdir("/sc");
+
+  // Collect first — renaming during the directory walk can corrupt the iterator.
+  std::vector<String> markers;
+  File root = SD.open("/");
+  if (root && root.isDirectory()) {
+    for (File f = root.openNextFile(); f; f = root.openNextFile()) {
+      if (f.isDirectory()) continue;
+      String n = f.name();
+      if (n.endsWith(".wigle") || n.endsWith(".wdg")) markers.push_back(n);
+    }
+    root.close();
+  }
+
+  int moved = 0;
+  for (size_t i = 0; i < markers.size(); i++) {
+    if (SD.rename("/" + markers[i], "/sc/" + markers[i])) moved++;
+  }
+
+  File m = SD.open("/sc/.migrated", FILE_WRITE);
+  if (m) { m.println("1"); m.close(); }
+  Logger::log(GUD_MSG, "[SC] Sidecar migration done — moved " + String(moved) + " marker(s) to /sc/");
 }
 
 // Upload one log file to WDG Wars.
@@ -3273,8 +3324,8 @@ void WiFiOps::serveConfigPage() {
           String filename = file.name();
           if (filename.endsWith(".log") && filename != "debug.log") {
             // Check sidecar upload status
-            bool wigleDone = SD.exists("/" + filename + ".wigle");
-            bool wdgDone   = SD.exists("/" + filename + ".wdg");
+            bool wigleDone = SD.exists("/sc/" + filename + ".wigle");
+            bool wdgDone   = SD.exists("/sc/" + filename + ".wdg");
 
             html += "<a href=\"/download?file=" + filename + "\">" + filename + "</a> ";
             html += String(file.size()) + " B";
@@ -3634,6 +3685,7 @@ void WiFiOps::showCountdown() {
 
 bool WiFiOps::begin(bool skip_admin, int mode_override) {
   this->current_scan_mode = WIFI_STANDBY;
+  bool boot_dock_handoff = false;
 
   esp_reset_reason_t reset_reason = esp_reset_reason();
   if (reset_reason == ESP_RST_POWERON ||
@@ -3702,6 +3754,19 @@ bool WiFiOps::begin(bool skip_admin, int mode_override) {
         battery.main(millis());
         gps.main();
 
+        // SEL hands the boot-time dock off to the runtime dock monitor so the
+        // main loop runs and the on-device Dock Menu becomes usable (SOLO only).
+        if (this->run_mode == SOLO_MODE && c_btn.justPressed()) {
+          Logger::log(STD_MSG, "[DOCK] SEL at boot dock — handing off to runtime monitor");
+          this->dock_ip            = WiFi.localIP().toString();
+          this->dock_state         = DOCK_STATE_MONITORING;
+          this->dock_last_scan_time = millis();
+          this->dock_depart_count  = 0;
+          this->dock_autoopen_menu = true;
+          boot_dock_handoff        = true;
+          break;
+        }
+
         if (millis() - this->dock_last_ui_time >= DOCK_UI_REFRESH_MS) {
           this->dock_last_ui_time = millis();
           this->drawServingScreen();
@@ -3717,9 +3782,10 @@ bool WiFiOps::begin(bool skip_admin, int mode_override) {
       }
     }
 
-    this->connected_as_client = false;
-
-    this->deinitWiFi();
+    if (!boot_dock_handoff) {
+      this->connected_as_client = false;
+      this->deinitWiFi();
+    }
   }
 
   // Sanity check for modes and keys
@@ -3747,23 +3813,29 @@ bool WiFiOps::begin(bool skip_admin, int mode_override) {
   else
     Logger::log(STD_MSG, "Encryption: Disabled");
 
-  this->initWiFi();
-
-  // Init NimBLE
+  // Free the boot-upload TLS arena regardless of path
   this->freeTlsGuard();
-  this->initBLE(); // NimBLE needs to not be init in order to upload to wigle
 
-  if (this->run_mode != SOLO_MODE)
-    this->startESPNow();
+  // Skip the wardrive transition when handing the boot dock off to the runtime
+  // monitor — keep the STA connection and web server up for the Dock Menu.
+  if (!boot_dock_handoff) {
+    this->initWiFi();
 
-  if ((this->run_mode == SOLO_MODE) || (this->run_mode == CORE_MODE))
-    startLog(LOG_FILE_NAME);
+    // Init NimBLE
+    this->initBLE(); // NimBLE needs to not be init in order to upload to wigle
 
-  // Random delay for nodes to stagger channels
-  if (this->run_mode == NODE_MODE) {
-    delay(1000);
-    this->runAdminWindowAfterScanCycle();
-    delay(random(100, 5000));
+    if (this->run_mode != SOLO_MODE)
+      this->startESPNow();
+
+    if ((this->run_mode == SOLO_MODE) || (this->run_mode == CORE_MODE))
+      startLog(LOG_FILE_NAME);
+
+    // Random delay for nodes to stagger channels
+    if (this->run_mode == NODE_MODE) {
+      delay(1000);
+      this->runAdminWindowAfterScanCycle();
+      delay(random(100, 5000));
+    }
   }
 
   this->init_time = millis();
@@ -3800,11 +3872,36 @@ bool WiFiOps::scanForTriggerSSID() {
   //Logger::log(STD_MSG, "Scan completed in " + String(millis() - start_time) + "ms");
 
   bool found = false;
+  this->trigger_last_rssi = -127;
   for (int i = 0; i < n; i++) {
-    if (WiFi.SSID(i) == trigSSID) { found = true; break; }
+    if (WiFi.SSID(i) == trigSSID) {
+      found = true;
+      int rs = WiFi.RSSI(i);
+      if (rs > this->trigger_last_rssi) this->trigger_last_rssi = rs;
+    }
   }
   WiFi.scanDelete();
   return found;
+}
+
+// Debounce dock entry: require DOCK_ARM_SIGHTINGS consecutive sightings of the
+// trigger SSID at >= DOCK_RSSI_MIN before committing (a single/weak beacon must
+// not flip the device into dock mode, which costs a reboot).
+bool WiFiOps::armDock(bool seen, int rssi) {
+  if (seen && rssi >= DOCK_RSSI_MIN) {
+    this->dock_arm_count++;
+    if (this->dock_arm_count >= DOCK_ARM_SIGHTINGS) {
+      this->dock_arm_count = 0;
+      return true;
+    }
+    Logger::log(STD_MSG, "[DOCK] Trigger seen rssi=" + String(rssi) +
+                " arming " + String(this->dock_arm_count) + "/" + String(DOCK_ARM_SIGHTINGS));
+    return false;
+  }
+  if (this->dock_arm_count > 0)
+    Logger::log(STD_MSG, "[DOCK] Trigger weak/absent (rssi=" + String(rssi) + ") — arm reset");
+  this->dock_arm_count = 0;
+  return false;
 }
 
 // Dispatcher — called from main() when dock_state != DOCK_STATE_NONE.
@@ -3984,6 +4081,9 @@ void WiFiOps::drawServingScreen() {
   if (battery.i2c_supported)
     display.tft->println("Bat: " + String(battery.getBatteryLevel()) + "%");
   display.tft->setTextSize(1);
+  display.tft->setTextColor(ST77XX_CYAN, ST77XX_BLACK);
+  display.tft->setCursor(0, TFT_HEIGHT - 8);
+  display.tft->print("SEL=Menu");
 }
 
 void WiFiOps::drawDockMonitorScreen() {
@@ -3998,6 +4098,9 @@ void WiFiOps::drawDockMonitorScreen() {
   if (battery.i2c_supported)
     display.tft->println("Bat: " + String(battery.getBatteryLevel()) + "%");
   display.tft->setTextSize(1);
+  display.tft->setTextColor(ST77XX_CYAN, ST77XX_BLACK);
+  display.tft->setCursor(0, TFT_HEIGHT - 8);
+  display.tft->print("SEL=Menu");
 }
 
 void WiFiOps::handleDockMonitoring(uint32_t currentTime) {
@@ -4005,6 +4108,11 @@ void WiFiOps::handleDockMonitoring(uint32_t currentTime) {
   server.handleClient();
   // Keep battery main running so chargeRate sampling fires
   battery.main(currentTime);
+
+  // While the on-device Dock Menu is up, the UI owns the screen and the user is
+  // interacting — don't redraw the dock screen or scan/depart underneath them.
+  if (this->dock_menu_open)
+    return;
 
   if (currentTime - this->dock_last_ui_time >= DOCK_UI_REFRESH_MS) {
     this->dock_last_ui_time = currentTime;
@@ -4080,6 +4188,14 @@ void WiFiOps::departDock() {
   display.tft->println("RESUMED");
 }
 
+void WiFiOps::startWardrivingFromDock() {
+  // User chose to wardrive from the Dock Menu — latch the dock so the standby
+  // scan doesn't immediately re-dock on the still-present trigger SSID.
+  rtc_dock_done = true;
+  this->dock_menu_open = false;
+  this->departDock();
+}
+
 // ============================================================
 
 void WiFiOps::main(uint32_t currentTime, bool in_sd_files) {
@@ -4116,8 +4232,9 @@ void WiFiOps::main(uint32_t currentTime, bool in_sd_files) {
       currentTime - this->dock_depart_time >= 60000) { // 60s cooldown after departing
       this->standby_scan_time = currentTime;
       //Logger::log(STD_MSG, "Calling scanForTriggerSSID from main");
-      if (this->scanForTriggerSSID()) {
-        Logger::log(STD_MSG, "[DOCK] Trigger SSID found in standby: " + trigSSID);
+      bool seen = this->scanForTriggerSSID();
+      if (this->armDock(seen, this->trigger_last_rssi)) {
+        Logger::log(STD_MSG, "[DOCK] Trigger SSID confirmed in standby: " + trigSSID);
         this->dock_webui_only       = !gps.getFixStatus();
         this->dock_state            = DOCK_STATE_CONNECTING;
         this->dock_connect_attempts = 0;

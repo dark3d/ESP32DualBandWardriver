@@ -50,6 +50,7 @@ struct Menu {
   Menu                * parentMenu;
   uint16_t               selected = 0;
   uint16_t               scroll_offset = 0;
+  uint8_t                textSize = 1;
 };
 
 class UI {
@@ -61,7 +62,10 @@ class UI {
     Menu delete_all_menu;
     Menu upload_all_menu;
     Menu mark_geofence_menu;
-    
+    Menu dock_menu;
+
+    bool in_dock_menu = false;   // Dock Menu (or its submenus) is up while docked
+    bool sd_menu_built = false;  // file menu built lazily on first open, not at boot
 
     bool hard_refresh = false;
 
@@ -88,6 +92,7 @@ class UI {
                   bool selected = false, String command = "");
     void setupSDFileList();
     void buildSDFileMenu();
+    void ensureSDFileMenu();   // build the file menu on first use (deferred off boot)
     void drawCurrentMenu();
     void handleMenuNavigation();
 
