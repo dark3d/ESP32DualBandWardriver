@@ -80,7 +80,7 @@ bool SDInterface::removeFile(String file_path) {
     return false;
 }
 
-void SDInterface::listDirToLinkedList(LinkedList<String>* file_names, String str_dir, String ext) {
+void SDInterface::listDirToLinkedList(LinkedList<String>* file_names, String str_dir, String ext, LinkedList<uint32_t>* file_sizes) {
   if (this->supported) {
     File dir = SD.open(str_dir);
     while (true)
@@ -95,13 +95,11 @@ void SDInterface::listDirToLinkedList(LinkedList<String>* file_names, String str
         continue;
 
       String file_name = entry.name();
-      if (ext != "") {
-        if (file_name.endsWith(ext)) {
-          file_names->add(file_name);
-        }
-      }
-      else
+      if (ext == "" || file_name.endsWith(ext)) {
         file_names->add(file_name);
+        if (file_sizes)
+          file_sizes->add((uint32_t)entry.size());
+      }
     }
   }
 }

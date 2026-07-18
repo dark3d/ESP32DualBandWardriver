@@ -591,7 +591,14 @@ void UI::setupSDFileList() {
   sd_obj.sd_files->clear();
   delete sd_obj.sd_files;
   sd_obj.sd_files = new LinkedList<String>();
-  sd_obj.listDirToLinkedList(sd_obj.sd_files, "/", ".log");
+
+  if (sd_obj.sd_file_sizes) {
+    sd_obj.sd_file_sizes->clear();
+    delete sd_obj.sd_file_sizes;
+  }
+  sd_obj.sd_file_sizes = new LinkedList<uint32_t>();
+
+  sd_obj.listDirToLinkedList(sd_obj.sd_files, "/", ".log", sd_obj.sd_file_sizes);
 }
 
 void UI::buildSDFileMenu() {
@@ -630,13 +637,14 @@ void UI::buildSDFileMenu() {
     });
 
     for (int i = 0; i < sd_obj.sd_files->size(); i++) {
-      File current_file = sd_obj.getFile("/" + sd_obj.sd_files->get(i));
       if (sd_obj.sd_files->get(i).startsWith("wardrive_") || sd_obj.sd_files->get(i).startsWith("wigle-")) {
+        uint32_t fsize = (sd_obj.sd_file_sizes && i < sd_obj.sd_file_sizes->size())
+                           ? sd_obj.sd_file_sizes->get(i) : 0;
         this->addNodes(&sd_file_menu, sd_obj.sd_files->get(i), ST77XX_WHITE, NULL, 0, [this, i]() {
           sd_obj.selected_file_name = sd_obj.sd_files->get(i);
           Logger::log(STD_MSG, sd_obj.sd_files->get(i) + " selected");
           this->current_menu = &action_menu;
-        }, current_file.size());
+        }, fsize);
       }
     }
 

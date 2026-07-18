@@ -51,9 +51,10 @@ class SDInterface {
     bool initSD();
 
     LinkedList<String>* sd_files;
+    LinkedList<uint32_t>* sd_file_sizes = nullptr;
 
     void listDir(String str_dir);
-    void listDirToLinkedList(LinkedList<String>* file_names, String str_dir = "/", String ext = "");
+    void listDirToLinkedList(LinkedList<String>* file_names, String str_dir = "/", String ext = "", LinkedList<uint32_t>* file_sizes = nullptr);
     File getFile(String path);
     void runUpdate();
     bool performUpdate(Stream &updateSource, size_t updateSize);

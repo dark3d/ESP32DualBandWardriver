@@ -579,6 +579,13 @@ bool Settings::createDefaultSettings(fs::FS &fs, bool spec, uint8_t index, Strin
     jsonBuffer["Settings"][28]["range"]["min"] = false;
     jsonBuffer["Settings"][28]["range"]["max"] = true;
 
+    // [29] Keep newest N wardrive logs (prune older synced logs)
+    jsonBuffer["Settings"][29]["name"] = LOG_KEEP_NAME;
+    jsonBuffer["Settings"][29]["type"] = "Int";
+    jsonBuffer["Settings"][29]["value"] = LOG_KEEP_DEFAULT;
+    jsonBuffer["Settings"][29]["range"]["min"] = LOG_KEEP_MIN;
+    jsonBuffer["Settings"][29]["range"]["max"] = LOG_KEEP_MAX;
+
     if (serializeJson(jsonBuffer, settings_string) == 0) {
       Logger::log(WARN_MSG, "Failed to write to string");
     }

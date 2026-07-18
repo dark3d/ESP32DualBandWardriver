@@ -1,5 +1,6 @@
 #include "WiFiOps.h"
 #include "BatteryInterface.h"
+#include <algorithm>
 #include "esp_task_wdt.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
@@ -1173,6 +1174,7 @@ void WiFiOps::OnDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, i
                 wifi_ops.setCurrent5gCount(0);
                 wifi_ops.setCurrentBLECount(0);
                 wifi_ops.setCurrentNetCount(0);
+                wifi_ops.pruneOldLogs();
               }
             }
           }
@@ -1704,6 +1706,63 @@ int WiFiOps::gpsBufferWindowMin() {
   if (w < GPS_BUFFER_WINDOW_MIN_MIN || w > GPS_BUFFER_WINDOW_MIN_MAX)
     return GPS_BUFFER_WINDOW_DEFAULT_MIN;
   return w;
+}
+
+int WiFiOps::logKeepCount() {
+  int n = settings.loadSetting<int>(LOG_KEEP_NAME);
+  if (n < LOG_KEEP_MIN || n > LOG_KEEP_MAX)
+    return LOG_KEEP_DEFAULT;
+  return n;
+}
+
+bool WiFiOps::logFullySynced(String logPath) {
+  bool wigle_cfg = !settings.loadSetting<String>("wu").isEmpty() &&
+                   !settings.loadSetting<String>("wt").isEmpty();
+  bool wdg_cfg   = !settings.loadSetting<String>(WDG_KEY_NAME).isEmpty();
+
+  if (!wigle_cfg && !wdg_cfg) return false;
+  if (wigle_cfg && !this->sidecarExists(logPath, "wigle")) return false;
+  if (wdg_cfg   && !this->sidecarExists(logPath, "wdg"))   return false;
+  return true;
+}
+
+void WiFiOps::pruneOldLogs() {
+  if (!sd_obj.supported) return;
+
+  int keep = this->logKeepCount();
+
+  std::vector<String> logs;
+  File root = SD.open("/");
+  if (!root || !root.isDirectory()) return;
+  for (File f = root.openNextFile(); f; f = root.openNextFile()) {
+    if (f.isDirectory()) continue;
+    String n = f.name();
+    if (n.endsWith(".log") && n != "debug.log")
+      logs.push_back(n);
+  }
+  root.close();
+
+  if ((int)logs.size() <= keep) return;
+
+  std::sort(logs.begin(), logs.end());   // ascending = oldest first
+
+  String active = buffer.getFileName();  // e.g. "/wigle-..._0.log"
+  int candidates = (int)logs.size() - keep;
+  int pruned = 0, kept_unsynced = 0;
+
+  for (int i = 0; i < candidates; i++) {
+    String path = "/" + logs[i];
+    if (active.length() && path == active) continue;    // never touch the active log
+    if (!this->logFullySynced(path)) { kept_unsynced++; continue; }
+
+    SD.remove(path);
+    SD.remove(path + ".wigle");
+    SD.remove(path + ".wdg");
+    pruned++;
+  }
+
+  Logger::log(GUD_MSG, "[RETAIN] keep=" + String(keep) + " logs=" + String((int)logs.size()) +
+              " pruned=" + String(pruned) + " keptUnsynced=" + String(kept_unsynced));
 }
 
 void WiFiOps::backfillPending() {
@@ -3096,6 +3155,7 @@ void WiFiOps::serveConfigPage() {
     bool   cur_dbg_en      = settings.loadSetting<bool>(DEBUG_LOG_NAME);
     bool   cur_gps_buf     = settings.loadSetting<bool>(GPS_BUFFER_NAME);
     int    cur_gps_buf_win = this->gpsBufferWindowMin();
+    int    cur_log_keep    = this->logKeepCount();
     int    cur_mode        = settings.loadSetting<int>("m");
     bool   cur_enc         = settings.loadSetting<bool>("e");
 
@@ -3140,6 +3200,13 @@ void WiFiOps::serveConfigPage() {
     if (cur_gps_buf) html += " checked";
     html += "> <small>Log networks seen while GPS has no lock; backfill positions on reacquire.</small><br>";
     html += "&nbsp;&nbsp;Max buffer window (minutes, " + String(GPS_BUFFER_WINDOW_MIN_MIN) + "-" + String(GPS_BUFFER_WINDOW_MIN_MAX) + "): <input type=\"number\" name=\"gps_buf_win\" value=\"" + String(cur_gps_buf_win) + "\" min=\"" + String(GPS_BUFFER_WINDOW_MIN_MIN) + "\" max=\"" + String(GPS_BUFFER_WINDOW_MIN_MAX) + "\" step=\"5\" style=\"width:70px\"><br>";
+
+    // ---- Storage ----
+    html += "<h3>Storage</h3>";
+    html += "<small>Keep only the newest N wardrive logs on the SD card. Older logs are deleted ";
+    html += "automatically once they have been uploaded to every configured service; un-uploaded ";
+    html += "logs are always kept. Fewer logs means a faster boot.</small><br><br>";
+    html += "Keep newest logs (" + String(LOG_KEEP_MIN) + "-" + String(LOG_KEEP_MAX) + "): <input type=\"number\" name=\"log_keep\" value=\"" + String(cur_log_keep) + "\" min=\"" + String(LOG_KEEP_MIN) + "\" max=\"" + String(LOG_KEEP_MAX) + "\" step=\"1\" style=\"width:70px\"><br>";
 
     // ---- SSID Exclusions ----
     html += "<h3>SSID Exclusions (up to " + String(MAX_SSID_EXCLUSIONS) + ")</h3>";
@@ -3315,6 +3382,14 @@ void WiFiOps::serveConfigPage() {
       if (w < GPS_BUFFER_WINDOW_MIN_MIN) w = GPS_BUFFER_WINDOW_MIN_MIN;
       if (w > GPS_BUFFER_WINDOW_MIN_MAX) w = GPS_BUFFER_WINDOW_MIN_MAX;
       settings.saveSetting<bool>(GPS_BUFFER_WINDOW_NAME, w, true);
+      anyChange = true;
+    }
+
+    if (server.hasArg("log_keep")) {
+      int n = server.arg("log_keep").toInt();
+      if (n < LOG_KEEP_MIN) n = LOG_KEEP_MIN;
+      if (n > LOG_KEEP_MAX) n = LOG_KEEP_MAX;
+      settings.saveSetting<bool>(LOG_KEEP_NAME, n, true);
       anyChange = true;
     }
 

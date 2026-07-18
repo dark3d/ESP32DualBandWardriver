@@ -168,6 +168,7 @@ class WiFiOps
     void bufferPendingDetection(const String& line);
     void backfillPending();
     int  gpsBufferWindowMin();
+    bool logFullySynced(String logPath);   // uploaded to every configured service
 
     uint8_t current_scan_mode;
     uint32_t init_time;
@@ -293,6 +294,8 @@ class WiFiOps
     bool begin(bool skip_admin = false, int mode_override = 0);
     void main(uint32_t currentTime, bool in_sd_files = false);
     void startLog(String file_name);
+    int  logKeepCount();                        // configured "keep newest N logs" (clamped)
+    void pruneOldLogs();                        // delete oldest fully-synced logs beyond N
     void initBLE();
     void initWiFi(bool set_country = false);
     void deinitBLE();

@@ -151,6 +151,11 @@
 #define CHANNEL_TIMER 80
 #define LOG_ROLL_ENTRIES  10000  // start a new log file after this many entries
 
+//// Log retention
+#define LOG_KEEP_DEFAULT  30     // keep newest N wardrive logs
+#define LOG_KEEP_MIN      5
+#define LOG_KEEP_MAX      500
+
 
 // ============================================================
 // Chunk 1: Extended feature constants

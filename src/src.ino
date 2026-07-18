@@ -104,6 +104,9 @@ void setup() {
   if (!sel_held)
     wifi_ops.tryBootDockUpload();
 
+  // Prune old wardrive logs before the UI opens each remaining log for its size
+  wifi_ops.pruneOldLogs();
+
   // Init battery
   battery.RunSetup();
   battery.battery_level = battery.getBatteryLevel();
@@ -112,8 +115,6 @@ void setup() {
   // Init GPS
   gps.begin();
   bootBar(75);
-
-  ui_obj.begin();
 
   // Init wifi and bluetooth
   wifi_ops.begin(sel_held || mode_override != 0, mode_override);
