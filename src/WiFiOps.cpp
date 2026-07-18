@@ -94,9 +94,6 @@ enum MsgType : uint8_t {
 
 WebServer server(80);
 
-// Promiscuous-capture hand-off: the RX callback runs in the WiFi task and must
-// not touch SD / String / the log buffer, so it parses each mgmt frame into this
-// POD and pushes it to a queue the main loop drains.
 struct promisc_ap_t {
   uint8_t bssid[6];
   char    ssid[33];
@@ -118,12 +115,12 @@ static void promiscuous_rx_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
   if (frame == nullptr || len < 36) return;
 
   const uint8_t fc0 = frame[0];
-  if (((fc0 >> 2) & 0x03) != 0) return;              // management frames only
+  if (((fc0 >> 2) & 0x03) != 0) return;
   const uint8_t subtype = (fc0 >> 4) & 0x0F;
-  if (subtype != 8 && subtype != 5) return;          // beacon (0x08) / probe-resp (0x05)
+  if (subtype != 8 && subtype != 5) return;
 
   promisc_ap_t r;
-  memcpy(r.bssid, frame + 16, 6);                    // addr3 = BSSID
+  memcpy(r.bssid, frame + 16, 6);
   r.rssi    = ppkt->rx_ctrl.rssi;
   r.channel = ppkt->rx_ctrl.channel;
   r.auth    = (uint8_t)wifi_ops.getAuthType(ppkt);
@@ -135,11 +132,11 @@ static void promiscuous_rx_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
     const uint8_t id = ies[0];
     const uint8_t elen = ies[1];
     if (ies_len < (size_t)(2 + elen)) break;
-    if (id == 0) {                                   // SSID
+    if (id == 0) {
       const uint8_t n = elen > 32 ? 32 : elen;
       memcpy(r.ssid, ies + 2, n);
       r.ssid[n] = '\0';
-    } else if (id == 3 && elen >= 1) {               // DS parameter set = channel
+    } else if (id == 3 && elen >= 1) {
       r.channel = ies[2];
     }
     ies += (2 + elen);
@@ -147,7 +144,7 @@ static void promiscuous_rx_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
   }
 
   BaseType_t hpw = pdFALSE;
-  xQueueSendFromISR(g_ap_queue, &r, &hpw);           // non-blocking; drops if full
+  xQueueSendFromISR(g_ap_queue, &r, &hpw);
 }
 
 
@@ -1425,10 +1422,9 @@ int WiFiOps::runWardrive(uint32_t currentTime) {
 
     scan_status = WiFi.scanComplete();
 
-    // Pause if scan is running already
-    if (scan_status == WIFI_SCAN_RUNNING) // Scan is still running
+    if (scan_status == WIFI_SCAN_RUNNING)
       delay(1);
-    else if (scan_status == WIFI_SCAN_FAILED) { // Scan is failed or not started
+    else if (scan_status == WIFI_SCAN_FAILED) {
       this->startNextNodeAssignedScan();
       delay(100);
       if (WiFi.scanComplete() == WIFI_SCAN_FAILED)
@@ -1440,14 +1436,10 @@ int WiFiOps::runWardrive(uint32_t currentTime) {
       this->current_2g4_count = 0;
       this->current_5g_count = 0;
 
-      // Scan has completed and is number of networks found
-      // Handle the scan results
       this->processWardrive(scan_status);
 
-      // Delete the scan data
       WiFi.scanDelete();
 
-      // Scan BLE here
       if (current_assigned_scan_idx == assigned_start_idx)
         this->scanBLE();
 
@@ -1457,7 +1449,6 @@ int WiFiOps::runWardrive(uint32_t currentTime) {
       if (current_assigned_scan_idx == assigned_start_idx)
         this->runAdminWindowAfterScanCycle();
 
-      // Start a new scan on the assigned channel range
       this->startNextNodeAssignedScan();
     }
   }
@@ -1828,9 +1819,6 @@ void WiFiOps::bufferBleDetection(const String& address, int rssi) {
               String(this->pending_count) + ")");
 }
 
-// ---- Chunk 4: load exclusion list once per scan cycle ----
-// Doing this outside the network loop avoids re-parsing the
-// settings JSON for every scanned network.
 void WiFiOps::loadExclusionCache() {
   this->excl_cache_count = 0;
   for (int e = 0; e < MAX_SSID_EXCLUSIONS; e++) {
@@ -1904,8 +1892,6 @@ void WiFiOps::logWardriveAP(uint8_t* bssid_raw, const String& ssid_in, int chann
       {
         display_string.concat(" ");
       }
-
-      //display_obj.display_buffer->add(display_string);
     #endif
 
     String wardrive_line = bssid_str + "," + ssid + "," + this->security_int_to_string(authtype) + "," + gps.getDatetime() + "," + (String)channel + "," + (String)rssi + "," + gps.getLat() + "," + gps.getLon() + "," + gps.getAlt() + "," + gps.getAccuracy() + ",WIFI";
@@ -1923,7 +1909,6 @@ void WiFiOps::logWardriveAP(uint8_t* bssid_raw, const String& ssid_in, int chann
     String ssid = ssid_in;
     ssid.replace(",","_");
 
-    // ---- Chunk 4: exclusion filter for NODE_MODE too ----
     if (this->excl_cache_count > 0 &&
         this->isSSIDExcluded(ssid, this->excl_cache, MAX_SSID_EXCLUSIONS)) {
       Logger::log(STD_MSG, "[EXCL] Node skipping excluded SSID: \"" + ssid + "\"");
@@ -1962,13 +1947,11 @@ void WiFiOps::processWardrive(uint16_t networks) {
     digitalWrite(LED_PIN, LOW);
 }
 
-// Per-channel dwell weighting: camp longest on the busy 2.4 GHz channels
-// (1/6/11) and the popular 5 GHz UNII-1/UNII-3 blocks, sweep the rest quickly.
 uint16_t WiFiOps::dwellForChannel(uint8_t ch) {
-  if (ch == 1 || ch == 6 || ch == 11) return 200;       // 2.4 GHz busy channels
-  if (ch <= 14) return 40;                               // other 2.4 GHz
-  if ((ch >= 36 && ch <= 48) || (ch >= 149 && ch <= 165)) return 100; // UNII-1 / UNII-3
-  return 40;                                             // DFS / other 5 GHz
+  if (ch == 1 || ch == 6 || ch == 11) return 200;
+  if (ch <= 14) return 40;
+  if ((ch >= 36 && ch <= 48) || (ch >= 149 && ch <= 165)) return 100;
+  return 40;
 }
 
 void WiFiOps::startPromiscuousCapture() {
@@ -1995,9 +1978,6 @@ void WiFiOps::stopPromiscuousCapture() {
   this->promisc_started = false;
 }
 
-// One dwell step of the SOLO capture engine: camp on the next channel, let the
-// RX callback fill the queue for the channel's weighted dwell, then drain it
-// through the shared log path. BLE and the dock trigger check run once per sweep.
 void WiFiOps::runPromiscuousSolo(uint32_t currentTime) {
   this->startPromiscuousCapture();
 
@@ -2021,7 +2001,6 @@ void WiFiOps::runPromiscuousSolo(uint32_t currentTime) {
   uint8_t ch = scan_channels[this->dwell_idx];
   esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
 
-  // Beacons / probe-responses arrive asynchronously into g_ap_queue while we wait.
   delay(WiFiOps::dwellForChannel(ch));
 
   this->loadExclusionCache();
@@ -2040,7 +2019,6 @@ void WiFiOps::runPromiscuousSolo(uint32_t currentTime) {
   if (this->dwell_idx < NUM_SCAN_CHANNELS)
     return;
 
-  // ---- End of a full sweep: dock trigger handling + BLE ----
   this->dwell_idx = 0;
 
   if (!trigSSID.isEmpty()) {
@@ -2049,7 +2027,7 @@ void WiFiOps::runPromiscuousSolo(uint32_t currentTime) {
       this->dock_state            = DOCK_STATE_CONNECTING;
       this->dock_connect_attempts = 0;
       this->trig_found_sweep      = false;
-      return; // main() will call runDockMode next cycle
+      return;
     }
 
     if (rtc_dock_done) {
@@ -2071,20 +2049,19 @@ void WiFiOps::runPromiscuousSolo(uint32_t currentTime) {
   }
   this->trig_found_sweep = false;
 
+  this->stopPromiscuousCapture();
   this->scanBLE();
   while (pBLEScan->isScanning())
     delay(1);
 }
 
 static inline uint32_t bloom_hash_a(const unsigned char* mac) {
-  // FNV-1a
   uint32_t h = 2166136261u;
   for (int i = 0; i < 6; i++) { h ^= mac[i]; h *= 16777619u; }
   return h;
 }
 
 static inline uint32_t bloom_hash_b(const unsigned char* mac) {
-  // Jenkins one-at-a-time; force odd so the double-hash step never stalls.
   uint32_t h = 0;
   for (int i = 0; i < 6; i++) { h += mac[i]; h += h << 10; h ^= h >> 6; }
   h += h << 3; h ^= h >> 11; h += h << 15;
@@ -2092,7 +2069,6 @@ static inline uint32_t bloom_hash_b(const unsigned char* mac) {
 }
 
 bool WiFiOps::seen_mac(unsigned char* mac) {
-  //Return true if this MAC has been seen this session (Bloom membership).
   uint32_t a = bloom_hash_a(mac);
   uint32_t b = bloom_hash_b(mac);
   for (int i = 0; i < BLOOM_HASHES; i++) {
@@ -2104,7 +2080,6 @@ bool WiFiOps::seen_mac(unsigned char* mac) {
 }
 
 void WiFiOps::save_mac(unsigned char* mac) {
-  //Record a MAC in the seen set (Bloom insert).
   uint32_t a = bloom_hash_a(mac);
   uint32_t b = bloom_hash_b(mac);
   for (int i = 0; i < BLOOM_HASHES; i++) {
@@ -3731,8 +3706,6 @@ bool WiFiOps::scanForTriggerSSID() {
   String trigSSID = settings.loadSetting<String>(TRIGGER_SSID_NAME);
   if (trigSSID.isEmpty()) return false;
 
-  // A synchronous scan and promiscuous capture can't share the radio — drop
-  // promiscuous first (re-armed lazily by runPromiscuousSolo next dwell).
   this->stopPromiscuousCapture();
 
   // Don't interrupt a running async scan — skip this cycle

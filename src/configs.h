@@ -145,8 +145,6 @@
 
 
 ////WiFi stuff
-// Seen-MAC dedup Bloom filter. A false positive silently drops a network, so
-// shrinking BLOOM_BITS raises the miss rate (~0.07% FP at 6k BSSIDs, <1% at 10k).
 #define BLOOM_BITS   98304
 #define BLOOM_BYTES  (BLOOM_BITS / 8)
 #define BLOOM_HASHES 7
