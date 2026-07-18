@@ -32,6 +32,8 @@
 // #define CORE
 // #define NODE
 
+// #define FORCE_WARDRIVE
+
 #if !defined(SOLO) && !defined(CORE) && !defined(NODE)
   #error "Define exactly one role: SOLO, CORE, or NODE"
 #endif

@@ -99,8 +99,10 @@ void setup() {
   // Minimal-heap dock upload BEFORE the memory-heavy subsystems (GPS/UI/ADS-B/BLE)
   // init, so mbedTLS gets a clean contiguous heap. Reboots into normal mode when
   // done. Skipped when SELECT is held ("resume wardriving").
+  #ifndef FORCE_WARDRIVE
   if (!sel_held)
     wifi_ops.tryBootDockUpload();
+  #endif
 
   // Init battery
   battery.RunSetup();
@@ -112,9 +114,15 @@ void setup() {
   bootBar(75);
 
   ui_obj.begin();
+  #ifdef FORCE_WARDRIVE
+  Serial.printf("[TRACE] post ui_obj.begin#1 %lu\n", millis());
+  #endif
 
   // Init wifi and bluetooth
   wifi_ops.begin(sel_held || mode_override != 0, mode_override);
+  #ifdef FORCE_WARDRIVE
+  Serial.printf("[TRACE] post wifi_ops.begin %lu\n", millis());
+  #endif
 
   // Init UI
   ui_obj.begin();
@@ -127,6 +135,16 @@ void setup() {
 }
 
 void loop() {
+  #ifdef FORCE_WARDRIVE
+  static uint32_t _hb = 0;
+  if (millis() - _hb > 1500) {
+    _hb = millis();
+    Serial.printf("[TRACE] loop t=%lu scan=%d docked=%d ui=%d serving=%d\n",
+                  millis(), wifi_ops.getCurrentScanMode(), (int)wifi_ops.isDocked(),
+                  (int)ui_obj.stat_display_mode, (int)wifi_ops.serving);
+  }
+  #endif
+
   // Diagnostic: send 'b' over serial to toggle a simulated GPS outage (buffering
   // test without unplugging the antenna). Sending 'g' forces it off.
   while (Serial.available()) {
@@ -147,6 +165,9 @@ void loop() {
   ui_obj.main(currentTime);
 
   // Solo or Core modes
+  #ifdef FORCE_WARDRIVE
+  wifi_ops.setCurrentScanMode(WIFI_WARDRIVING);
+  #else
   if (((gps.getFixStatus()) || wifi_ops.isGpsBufferingEnabled()) && (sd_obj.supported) && (ui_obj.stat_display_mode != SD_FILES))
     wifi_ops.setCurrentScanMode(WIFI_WARDRIVING);
   // Nodes
@@ -159,4 +180,5 @@ void loop() {
     if (wifi_ops.run_mode == NODE_MODE)
       digitalWrite(LED_PIN, LOW);
   }
+  #endif
 }
