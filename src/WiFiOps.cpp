@@ -2076,43 +2076,41 @@ void WiFiOps::runPromiscuousSolo(uint32_t currentTime) {
     delay(1);
 }
 
-bool WiFiOps::mac_cmp(struct mac_addr addr1, struct mac_addr addr2) {
-  //Return true if 2 mac_addr structs are equal.
-  for (int y = 0; y < 6 ; y++) {
-    if (addr1.bytes[y] != addr2.bytes[y]) {
+static inline uint32_t bloom_hash_a(const unsigned char* mac) {
+  // FNV-1a
+  uint32_t h = 2166136261u;
+  for (int i = 0; i < 6; i++) { h ^= mac[i]; h *= 16777619u; }
+  return h;
+}
+
+static inline uint32_t bloom_hash_b(const unsigned char* mac) {
+  // Jenkins one-at-a-time; force odd so the double-hash step never stalls.
+  uint32_t h = 0;
+  for (int i = 0; i < 6; i++) { h += mac[i]; h += h << 10; h ^= h >> 6; }
+  h += h << 3; h ^= h >> 11; h += h << 15;
+  return h | 1u;
+}
+
+bool WiFiOps::seen_mac(unsigned char* mac) {
+  //Return true if this MAC has been seen this session (Bloom membership).
+  uint32_t a = bloom_hash_a(mac);
+  uint32_t b = bloom_hash_b(mac);
+  for (int i = 0; i < BLOOM_HASHES; i++) {
+    uint32_t bit = (a + (uint32_t)i * b) % BLOOM_BITS;
+    if (!(this->bloom_bits[bit >> 3] & (1u << (bit & 7))))
       return false;
-    }
   }
   return true;
 }
 
-bool WiFiOps::seen_mac(unsigned char* mac) {
-  //Return true if this MAC address is in the recently seen array.
-
-  struct mac_addr tmp;
-  for (int x = 0; x < 6 ; x++) {
-    tmp.bytes[x] = mac[x];
-  }
-
-  for (int x = 0; x < mac_history_len; x++) {
-    if (this->mac_cmp(tmp, mac_history[x])) {
-      return true;
-    }
-  }
-  return false;
-}
-
 void WiFiOps::save_mac(unsigned char* mac) {
-  //Save a MAC address into the recently seen array.
-  if (this->mac_history_cursor >= mac_history_len) {
-    this->mac_history_cursor = 0;
+  //Record a MAC in the seen set (Bloom insert).
+  uint32_t a = bloom_hash_a(mac);
+  uint32_t b = bloom_hash_b(mac);
+  for (int i = 0; i < BLOOM_HASHES; i++) {
+    uint32_t bit = (a + (uint32_t)i * b) % BLOOM_BITS;
+    this->bloom_bits[bit >> 3] |= (1u << (bit & 7));
   }
-  struct mac_addr tmp;
-  for (int x = 0; x < 6 ; x++) {
-    tmp.bytes[x] = mac[x];
-  }
-
-  mac_history[this->mac_history_cursor] = tmp;
   this->mac_history_cursor++;
 }
 
@@ -2166,9 +2164,8 @@ String WiFiOps::security_int_to_string(int security_type) {
 }
 
 void WiFiOps::clearMacHistory() {
-    for (int i = 0; i < mac_history_len; ++i) {
-        memset(mac_history[i].bytes, 0, sizeof(mac_history[i].bytes));
-    }
+    memset(this->bloom_bits, 0, sizeof(this->bloom_bits));
+    this->mac_history_cursor = 0;
 }
 
 void WiFiOps::startLog(String file_name) {

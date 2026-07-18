@@ -145,7 +145,11 @@
 
 
 ////WiFi stuff
-#define mac_history_len 200
+// Seen-MAC dedup Bloom filter. A false positive silently drops a network, so
+// shrinking BLOOM_BITS raises the miss rate (~0.07% FP at 6k BSSIDs, <1% at 10k).
+#define BLOOM_BITS   98304
+#define BLOOM_BYTES  (BLOOM_BITS / 8)
+#define BLOOM_HASHES 7
 #define CHANNEL_TIMER 80
 #define LOG_ROLL_ENTRIES  10000  // start a new log file after this many entries
 

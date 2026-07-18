@@ -171,7 +171,7 @@ class WiFiOps
 
     uint8_t current_scan_mode;
     uint32_t init_time;
-    struct mac_addr mac_history[mac_history_len];
+    uint8_t bloom_bits[BLOOM_BYTES];
 
     uint32_t current_net_count = 0;
     uint32_t current_2g4_count = 0;
@@ -198,7 +198,6 @@ class WiFiOps
     void showCountdown();
     int runWardrive(uint32_t currentTime);
     void scanBLE();
-    bool mac_cmp(struct mac_addr addr1, struct mac_addr addr2);
     void clearMacHistory();
     String security_int_to_string(int security_type);
     void processWardrive(uint16_t networks);
