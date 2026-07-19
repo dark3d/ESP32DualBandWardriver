@@ -782,7 +782,8 @@ void UI::updateStats(uint32_t currentTime, uint32_t wifiCount, uint32_t count2g4
   display.tft->print("BLE: ");
   display.tft->print(String(bleCount) + "   ");
   display.tft->print(" | GPS Sats: ");
-  display.tft->println(gpsSats > 0 ? String(gpsSats) + " " : "No Fix");
+  display.tft->println(gps.getFixStatus() ? (String(gpsSats) + " fix")
+                       : (gpsSats > 0 ? (String(gpsSats) + " nofix") : String("No Fix")));
 
   display.tft->println();
 
