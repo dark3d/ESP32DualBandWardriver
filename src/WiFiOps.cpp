@@ -182,9 +182,45 @@ class scanCallbacks : public NimBLEScanCallbacks {
 
         String ble_addr = (String)advertisedDevice->getAddress().toString().c_str();
 
+        String ble_info = "";
+        std::string ble_name = advertisedDevice->getName();
+        if (!ble_name.empty()) {
+          ble_info = (String)ble_name.c_str();
+          ble_info.replace(",", "_");
+          ble_info.replace(";", "_");
+          ble_info.replace("\n", "_");
+          ble_info.replace("\r", "_");
+        }
+        ble_info += ";";
+        if (advertisedDevice->haveManufacturerData()) {
+          uint8_t ble_md_count = advertisedDevice->getManufacturerDataCount();
+          for (uint8_t ble_mi = 0; ble_mi < ble_md_count; ble_mi++) {
+            std::string ble_md = advertisedDevice->getManufacturerData(ble_mi);
+            for (size_t ble_bi = 0; ble_bi < ble_md.length(); ble_bi++) {
+              char ble_hx[3];
+              snprintf(ble_hx, sizeof(ble_hx), "%02X", (uint8_t)ble_md[ble_bi]);
+              ble_info += ble_hx;
+            }
+          }
+        }
+        ble_info += ";";
+        uint8_t ble_uuid_count = advertisedDevice->getServiceUUIDCount();
+        for (uint8_t ble_ui = 0; ble_ui < ble_uuid_count; ble_ui++) {
+          if (ble_ui) ble_info += "|";
+          ble_info += (String)advertisedDevice->getServiceUUID(ble_ui).toString().c_str();
+        }
+
+        if (advertisedDevice->haveManufacturerData()) {
+          std::string ble_md0 = advertisedDevice->getManufacturerData(0);
+          if (ble_md0.length() >= 2 && (uint8_t)ble_md0[0] == FLOCK_BLE_CID_LO && (uint8_t)ble_md0[1] == FLOCK_BLE_CID_HI)
+            wifi_ops.noteFuzzHit(FUZZ_CAM, "Flock", advertisedDevice->getRSSI());
+        }
+        if (macBytes[0] == AXON_OUI0 && macBytes[1] == AXON_OUI1 && macBytes[2] == AXON_OUI2)
+          wifi_ops.noteFuzzHit(FUZZ_LEO, "Axon?", advertisedDevice->getRSSI());
+
         if (can_stamp) {
           gps_snapshot_t snap = gps.getSnapshot();
-          String wardrive_line = ble_addr + ",,[BLE]," + snap.datetime + ",0," + (String)advertisedDevice->getRSSI() + "," + snap.lat + "," + snap.lon + "," + snap.alt + "," + snap.accuracy + ",BLE";
+          String wardrive_line = ble_addr + "," + ble_info + ",[BLE]," + snap.datetime + ",0," + (String)advertisedDevice->getRSSI() + "," + snap.lat + "," + snap.lon + "," + snap.alt + "," + snap.accuracy + ",BLE";
           Logger::log(GUD_MSG, (String)wifi_ops.mac_history_cursor + " | " + wardrive_line);
           buffer.append(wardrive_line + "\n");
         }
@@ -1983,6 +2019,11 @@ void WiFiOps::logWardriveAP(uint8_t* bssid_raw, const String& ssid_in, int chann
         this->setCurrent5gCount(this->getCurrent5gCount() + 1);
       else
         this->setCurrent2g4Count(this->getCurrent2g4Count() + 1);
+
+      if (bssid_raw[0] == CRADLEPOINT_OUI0 && bssid_raw[1] == CRADLEPOINT_OUI1 && bssid_raw[2] == CRADLEPOINT_OUI2)
+        this->noteFuzzHit(FUZZ_LEO, ssid.length() ? ssid : String("Cradlepoint"), rssi);
+      else if (bssid_raw[0] == AXON_OUI0 && bssid_raw[1] == AXON_OUI1 && bssid_raw[2] == AXON_OUI2)
+        this->noteFuzzHit(FUZZ_LEO, ssid.length() ? ssid : String("Axon?"), rssi);
     }
   }
   else if (this->run_mode == NODE_MODE) {
@@ -2003,6 +2044,21 @@ void WiFiOps::logWardriveAP(uint8_t* bssid_raw, const String& ssid_in, int chann
     else
       this->sendBroadcastStringPlain(enow_line);
   }
+}
+
+void WiFiOps::noteFuzzHit(uint8_t cat, const String& label, int rssi) {
+  if (cat == FUZZ_CAM) this->fuzz_cam_count++;
+  else if (cat == FUZZ_LEO) this->fuzz_leo_count++;
+  else return;
+  this->fuzz_last_cat  = cat;
+  this->fuzz_last_rssi = rssi;
+  this->fuzz_last_ms   = millis();
+  String l = label;
+  l.replace("\n", " ");
+  l.replace("\r", " ");
+  strncpy(this->fuzz_last_label, l.c_str(), sizeof(this->fuzz_last_label) - 1);
+  this->fuzz_last_label[sizeof(this->fuzz_last_label) - 1] = '\0';
+  Logger::log(GUD_MSG, "[FUZZ] " + String(cat == FUZZ_CAM ? "CAM " : "LEO ") + label + " " + String(rssi));
 }
 
 void WiFiOps::processWardrive(uint16_t networks) {

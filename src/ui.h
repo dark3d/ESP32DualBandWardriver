@@ -30,10 +30,11 @@ extern Switches c_btn;
 #define STATS_NEW    0  // New large-format stats screen (Screen 1)
 #define FULL_STATS   1  // Original stats screen (Screen 2)
 #define AIRCRAFT     2  // ADS-B aircraft screen (Screen 3)
-#define SD_FILES     3  // SD file menu
-#define INCOGNITO    4  // Blank screen (Screen 4)
+#define FUZZBUSTER   3  // Surveillance detector (Screen 4)
+#define SD_FILES     4  // SD file menu
+#define INCOGNITO    5  // Blank screen (Screen 5)
 
-#define MAX_DISPLAY_MODES 5
+#define MAX_DISPLAY_MODES 6
 
 struct MenuNode {
   String name;
@@ -80,10 +81,16 @@ class UI {
     uint32_t incognito_start_ms = 0;
     int      incognito_last_sec = -1;
 
+    uint32_t fuzz_flash_start_ms = 0;
+    uint32_t fuzz_flash_seen_ms  = 0;
+    bool     fuzz_flash_active   = false;
+    int8_t   fuzz_flash_phase    = -1;
+
     void printFirmwareVersion();
     void printBatteryLevel(int8_t batteryLevel);
     void drawStatsNew(uint32_t currentTime, uint32_t count2g4, uint32_t count5g,
                       uint32_t bleCount, int gpsSats, int8_t batteryLevel, bool do_now);
+    void drawFuzzbuster(uint32_t currentTime, bool do_now);
     void updateStats(uint32_t currentTime, uint32_t wifiCount, uint32_t count2g4,
                      uint32_t count5g, uint32_t bleCount, int gpsSats,
                      int8_t batteryLevel, bool do_now = false);

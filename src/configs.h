@@ -81,6 +81,22 @@
 //// UI Stuff
 #define UI_UPDATE_TIME 5 * 1000 // 1 second
 
+#define FUZZ_NONE 0
+#define FUZZ_CAM  1
+#define FUZZ_LEO  2
+
+#define CRADLEPOINT_OUI0 0x00
+#define CRADLEPOINT_OUI1 0x30
+#define CRADLEPOINT_OUI2 0x44
+#define AXON_OUI0 0x00
+#define AXON_OUI1 0x25
+#define AXON_OUI2 0xDF
+#define FLOCK_BLE_CID_LO 0xC8
+#define FLOCK_BLE_CID_HI 0x09
+
+#define FUZZ_FLASH_MS 2500
+#define FUZZ_FLASH_TOGGLE_MS 250
+
 #define U_BTN 9
 #define D_BTN 8
 #define C_BTN 1

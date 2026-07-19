@@ -626,6 +626,120 @@ void UI::drawAircraft(uint32_t currentTime, bool do_now) {
 // ============================================================
 // Screen 2 — original stats display (unchanged)
 // ============================================================
+void UI::drawFuzzbuster(uint32_t currentTime, bool do_now) {
+  display.tft->setRotation(3);
+  display.tft->setTextWrap(false);
+
+  uint32_t hit_ms = wifi_ops.fuzz_last_ms;
+
+  if (do_now) {
+    this->fuzz_flash_seen_ms = hit_ms;
+    this->fuzz_flash_active  = false;
+  }
+  else if (hit_ms != 0 && hit_ms != this->fuzz_flash_seen_ms) {
+    this->fuzz_flash_seen_ms  = hit_ms;
+    this->fuzz_flash_start_ms = currentTime;
+    this->fuzz_flash_active   = true;
+    this->fuzz_flash_phase    = -1;
+  }
+
+  if (this->fuzz_flash_active) {
+    if (currentTime - this->fuzz_flash_start_ms >= FUZZ_FLASH_MS) {
+      this->fuzz_flash_active      = false;
+      this->last_stat_display_mode = 255;
+      display.tft->fillScreen(ST77XX_BLACK);
+    }
+    else {
+      int8_t phase = ((currentTime - this->fuzz_flash_start_ms) / FUZZ_FLASH_TOGGLE_MS) & 1;
+      if (phase != this->fuzz_flash_phase) {
+        this->fuzz_flash_phase = phase;
+        uint16_t bg;
+        if (wifi_ops.fuzz_last_cat == FUZZ_CAM)
+          bg = phase ? ST77XX_BLACK : ST77XX_RED;
+        else
+          bg = phase ? ST77XX_BLUE : ST77XX_RED;
+        display.tft->fillScreen(bg);
+        display.tft->setTextColor(ST77XX_WHITE);
+        display.tft->setTextSize(2);
+        String big = (wifi_ops.fuzz_last_cat == FUZZ_CAM) ? String("FLOCK") : String("COP GEAR");
+        int bw = big.length() * 12;
+        display.tft->setCursor((TFT_WIDTH - bw) / 2 > 0 ? (TFT_WIDTH - bw) / 2 : 0, 20);
+        display.tft->print(big);
+        display.tft->setTextSize(1);
+        String sub = String(wifi_ops.fuzz_last_label) + " " + String(wifi_ops.fuzz_last_rssi);
+        int sw = sub.length() * 6;
+        display.tft->setCursor((TFT_WIDTH - sw) / 2 > 0 ? (TFT_WIDTH - sw) / 2 : 0, 48);
+        display.tft->print(sub);
+      }
+      return;
+    }
+  }
+
+  if ((currentTime - lastUpdateTime < UI_UPDATE_TIME) && !do_now &&
+      this->last_stat_display_mode == FUZZBUSTER)
+    return;
+  lastUpdateTime               = currentTime;
+  this->last_stat_display_mode = FUZZBUSTER;
+
+  display.clearScreen();
+  display.tft->setRotation(3);
+  display.tft->setTextWrap(false);
+
+  display.tft->setTextSize(1);
+  display.tft->setTextColor(ST77XX_CYAN, ST77XX_BLACK);
+  display.tft->setCursor(0, 0);
+  display.tft->print("FUZZBUSTER");
+
+  char batBuf[8];
+  snprintf(batBuf, sizeof(batBuf), "%d%%", battery.getBatteryLevel());
+  uint16_t batW = strlen(batBuf) * 6;
+  display.tft->setCursor(TFT_WIDTH - batW - 2, 0);
+  display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  display.tft->print(batBuf);
+
+  display.tft->drawFastHLine(0, 11, TFT_WIDTH, 0x4208);
+
+  uint16_t half = TFT_WIDTH / 2;
+
+  display.tft->setTextSize(1);
+  display.tft->setTextColor(ST77XX_RED, ST77XX_BLACK);
+  display.tft->setCursor((half - 3 * 6) / 2, 16);
+  display.tft->print("CAM");
+  display.tft->setTextColor(ST77XX_CYAN, ST77XX_BLACK);
+  display.tft->setCursor(half + (half - 3 * 6) / 2, 16);
+  display.tft->print("COP");
+
+  display.tft->setTextSize(2);
+  char cbuf[12];
+  snprintf(cbuf, sizeof(cbuf), "%lu", (unsigned long)wifi_ops.fuzz_cam_count);
+  int cw = strlen(cbuf) * 12;
+  display.tft->setTextColor(ST77XX_RED, ST77XX_BLACK);
+  display.tft->setCursor((half - cw) / 2 > 0 ? (half - cw) / 2 : 0, 30);
+  display.tft->print(cbuf);
+
+  char lbuf[12];
+  snprintf(lbuf, sizeof(lbuf), "%lu", (unsigned long)wifi_ops.fuzz_leo_count);
+  int lw = strlen(lbuf) * 12;
+  display.tft->setTextColor(ST77XX_CYAN, ST77XX_BLACK);
+  display.tft->setCursor(half + ((half - lw) / 2 > 0 ? (half - lw) / 2 : 0), 30);
+  display.tft->print(lbuf);
+
+  display.tft->drawFastHLine(0, 52, TFT_WIDTH, 0x4208);
+
+  display.tft->setTextSize(1);
+  display.tft->setCursor(0, 58);
+  if (wifi_ops.fuzz_last_ms == 0) {
+    display.tft->setTextColor(0x7BEF, ST77XX_BLACK);
+    display.tft->print("no hits yet");
+  }
+  else {
+    display.tft->setTextColor((wifi_ops.fuzz_last_cat == FUZZ_CAM) ? ST77XX_RED : ST77XX_CYAN, ST77XX_BLACK);
+    String last = String(wifi_ops.fuzz_last_label);
+    if (last.length() > 17) last = last.substring(0, 17);
+    display.tft->print(last + " " + String(wifi_ops.fuzz_last_rssi));
+  }
+}
+
 void UI::updateStats(uint32_t currentTime, uint32_t wifiCount, uint32_t count2g4,
                      uint32_t count5g, uint32_t bleCount, int gpsSats,
                      int8_t batteryLevel, bool do_now) {
@@ -998,6 +1112,10 @@ void UI::main(uint32_t currentTime) {
     else if (this->stat_display_mode == AIRCRAFT) {
       this->drawAircraft(currentTime, false);
     }
+    // ---- Screen 4: Fuzzbuster ----
+    else if (this->stat_display_mode == FUZZBUSTER) {
+      this->drawFuzzbuster(currentTime, false);
+    }
 
     // ---- Button handling — debounced at 300ms ----
     bool mode_change_ok = (currentTime - this->last_mode_change_ms >= 300);
@@ -1023,6 +1141,8 @@ void UI::main(uint32_t currentTime) {
           gps.getNumSats(), battery.getBatteryLevel(), true);
       else if (next == AIRCRAFT)
         this->drawAircraft(currentTime, true);
+      else if (next == FUZZBUSTER)
+        this->drawFuzzbuster(currentTime, true);
     }
 
     if (d_btn.justPressed() && mode_change_ok) {
@@ -1046,6 +1166,8 @@ void UI::main(uint32_t currentTime) {
           gps.getNumSats(), battery.getBatteryLevel(), true);
       else if (next == AIRCRAFT)
         this->drawAircraft(currentTime, true);
+      else if (next == FUZZBUSTER)
+        this->drawFuzzbuster(currentTime, true);
     }
 
     if (c_btn.justPressed())

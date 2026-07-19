@@ -285,6 +285,14 @@ class WiFiOps
     uint32_t aircraftSessionTotal();
     void flushAircraftBuffer(uint32_t now);
 
+    uint32_t fuzz_cam_count = 0;
+    uint32_t fuzz_leo_count = 0;
+    uint32_t fuzz_last_ms   = 0;
+    uint8_t  fuzz_last_cat  = FUZZ_NONE;
+    int      fuzz_last_rssi = 0;
+    char     fuzz_last_label[24] = {0};
+    void noteFuzzHit(uint8_t cat, const String& label, int rssi);
+
     uint8_t current_assignment_version = 1;
     uint8_t current_assigned_scan_idx = 0;
 
