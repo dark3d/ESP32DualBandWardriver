@@ -31,8 +31,10 @@
 // Chunk 1: New setting key names
 // ============================================================
 #define WDG_KEY_NAME       "wdg_key"   // WDG Wars API key (String)
-#define TRIGGER_SSID_NAME  "t_ssid"    // Dock trigger SSID e.g. "K1T" (String)
-#define TRIGGER_PASS_NAME  "t_pass"    // Dock trigger SSID password (String)
+#define TRIGGER_SSID_NAME  "t_ssid"    // legacy single dock SSID (migrated to ds_0)
+#define TRIGGER_PASS_NAME  "t_pass"    // legacy single dock password (migrated to dp_0)
+#define DOCK_SSID_PREFIX   "ds_"       // ds_0..ds_4  docking network SSIDs (String)
+#define DOCK_PASS_PREFIX   "dp_"       // dp_0..dp_4  docking network passwords (String)
 #define ADMIN_PASS_NAME    "a_pass"    // Basic Auth password for web UI (String)
 #define DEBUG_LOG_NAME     "dbg_en"    // SD debug log enabled (bool)
 #define GPS_BUFFER_NAME    "gps_buf"   // buffer detections while GPS unfixed, backfill on reacquire (bool)

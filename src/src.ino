@@ -95,6 +95,10 @@ void setup() {
   // Move any legacy root upload markers into /sc/ before anything checks them
   wifi_ops.migrateSidecars();
 
+  // Migrate the legacy single trigger into the docking-network list + cache it,
+  // before the boot dock upload needs it
+  wifi_ops.initDockConfig();
+
   // Capture boot-time button holds once (justPressed is edge-triggered).
   bool sel_held = c_btn.justPressed();
   int mode_override = 0;

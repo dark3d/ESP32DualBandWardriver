@@ -2081,15 +2081,16 @@ void WiFiOps::runPromiscuousSolo(uint32_t currentTime) {
 
   this->loadExclusionCache();
 
-  String trigSSID = settings.loadSetting<String>(TRIGGER_SSID_NAME);
-
   promisc_ap_t r;
   while (xQueueReceive(g_ap_queue, &r, 0) == pdTRUE) {
     String ssid = String(r.ssid);
-    if (!trigSSID.isEmpty() && ssid == trigSSID) {
+    int di = this->matchDockSSID(ssid);
+    if (di >= 0) {
       this->trig_found_sweep = true;
-      if ((int)r.rssi > this->trig_best_rssi_sweep)
+      if ((int)r.rssi > this->trig_best_rssi_sweep) {
         this->trig_best_rssi_sweep = (int)r.rssi;
+        this->dock_matched_idx = di;
+      }
     }
     this->logWardriveAP(r.bssid, ssid, (int)r.channel, (int)r.rssi, (int)r.auth);
   }
@@ -2100,10 +2101,10 @@ void WiFiOps::runPromiscuousSolo(uint32_t currentTime) {
 
   this->dwell_idx = 0;
 
-  if (!trigSSID.isEmpty()) {
+  if (this->anyDockConfigured()) {
     if (!rtc_dock_done &&
         this->armDock(this->trig_found_sweep, this->trig_best_rssi_sweep)) {
-      Logger::log(STD_MSG, "[DOCK] Trigger SSID confirmed (armed) — docking: " + trigSSID);
+      Logger::log(STD_MSG, "[DOCK] Docking network confirmed (armed) — docking: " + this->dockSSID(this->dock_matched_idx));
       this->dock_state            = DOCK_STATE_CONNECTING;
       this->dock_connect_attempts = 0;
       this->trig_found_sweep      = false;
@@ -2990,15 +2991,16 @@ bool WiFiOps::tryBootDockUpload() {
 
   if (rtc_dock_done) return false;                       // already synced this dock session
 
-  String trig = settings.loadSetting<String>(TRIGGER_SSID_NAME);
-  if (trig.isEmpty()) return false;                      // docking not configured
+  // Upload if any docking network or the boot Network is configured
+  if (!this->anyDockConfigured() &&
+      settings.loadSetting<String>("s").isEmpty()) return false;
 
   Logger::log(STD_MSG, "[DOCK] Minimal-boot dock upload — clean heap before feature init");
   Logger::log(STD_MSG, "[HEAP] pre-upload free=" + String(ESP.getFreeHeap()) +
               " maxAlloc=" + String(ESP.getMaxAllocHeap()));
 
   this->initWiFi();
-  bool connected = this->tryConnectToWiFi();
+  bool connected = this->connectForUpload();
   this->connected_as_client = connected;
 
   if (connected) {
@@ -3202,7 +3204,6 @@ void WiFiOps::serveConfigPage() {
     String cur_ssid        = settings.loadSetting<String>("s");
     String cur_wigle_user  = settings.loadSetting<String>("wu");
     String cur_wdg_key     = settings.loadSetting<String>(WDG_KEY_NAME);
-    String cur_t_ssid      = settings.loadSetting<String>(TRIGGER_SSID_NAME);
     bool   cur_dbg_en      = settings.loadSetting<bool>(DEBUG_LOG_NAME);
     bool   cur_gps_buf     = settings.loadSetting<bool>(GPS_BUFFER_NAME);
     int    cur_gps_buf_win = this->gpsBufferWindowMin();
@@ -3210,68 +3211,123 @@ void WiFiOps::serveConfigPage() {
     int    cur_mode        = settings.loadSetting<int>("m");
     bool   cur_enc         = settings.loadSetting<bool>("e");
 
-    String html = "<html><body>";
-    html += "<h2>JCMK C5 Wardriver &mdash; Configuration</h2>";
-    html += "<form action=\"/save\" method=\"POST\">";
+    String modeStr = (cur_mode == CORE_MODE) ? "Core" : (cur_mode == NODE_MODE ? "Node" : "Solo");
+    bool set_pass  = !settings.loadSetting<String>("p").isEmpty();
+    bool set_wt    = !settings.loadSetting<String>("wt").isEmpty();
+    bool set_wdg   = !cur_wdg_key.isEmpty();
+    bool set_admin = !settings.loadSetting<String>(ADMIN_PASS_NAME).isEmpty();
+    const char* DOTS = "&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;";
 
-    // ---- Network ----
-    html += "<h3>Network</h3>";
-    html += "<small>Network to connect at boot for web UI access (e.g. home WiFi) - separate from Trigger SSID</small><br><br>";
-    html += "AP SSID: <input type=\"text\" name=\"ssid\" value=\"" + cur_ssid + "\"><br>";
-    html += "AP Password: <input type=\"password\" name=\"password\" placeholder=\"leave blank to keep\"><br>";
+    String html;
+    html.reserve(10000);
+    html += "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">";
+    html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
+    html += "<title>Wardriver Configuration</title><style>";
+    html += ":root{--bg:#e9e1d3;--card:#faf6ee;--bd:#d3c6b0;--bds:#b9a888;--tx:#2e2820;--mut:#7c7161;--acc:#6f4e37;--acd:#573c2a;--ok:#4f7a3a;--okb:#e7efdd}";
+    html += "*{box-sizing:border-box}html,body{margin:0;padding:0}";
+    html += "body{background:var(--bg);color:var(--tx);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;padding:0 16px 96px}";
+    html += ".wrap{max-width:620px;margin:0 auto}";
+    html += "header{padding:22px 2px 6px}header h1{margin:0;font-size:22px;font-weight:600}header .meta{color:var(--mut);font-size:13px;margin-top:2px}";
+    html += "section{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:16px 16px 4px;margin:16px 0}";
+    html += "section>h2{margin:0 0 3px;font-size:16px;font-weight:600;color:var(--acc);padding-bottom:8px;border-bottom:1px solid var(--bd)}";
+    html += ".hint{color:var(--mut);font-size:13px;margin:8px 0 14px}";
+    html += ".field{margin:0 0 14px}.field>label{display:block;font-size:13px;font-weight:600;margin:0 0 5px}";
+    html += "input[type=text],input[type=password],input[type=number]{width:100%;background:#fff;border:1px solid var(--bds);color:var(--tx);border-radius:5px;padding:9px 11px;font-size:15px;font-family:inherit;outline:none}";
+    html += "input:focus{border-color:var(--acc)}.num{max-width:150px}";
+    html += ".row{display:flex;gap:14px;flex-wrap:wrap}.row>.field{flex:1;min-width:120px}";
+    html += ".saved{display:inline-block;font-size:11px;font-weight:700;color:var(--ok);background:var(--okb);border:1px solid #c4d6b3;border-radius:4px;padding:1px 6px;margin-left:6px}";
+    html += ".check{display:flex;align-items:flex-start;gap:9px;margin:0 0 14px}.check input{margin:2px 0 0;width:16px;height:16px;flex:0 0 auto}";
+    html += ".check .lab{font-size:14px}.check .lab small{display:block;color:var(--mut);font-size:12px;margin-top:1px}";
+    html += ".radios{display:flex;gap:20px;flex-wrap:wrap;padding:2px 0 12px}.radios label{display:flex;align-items:center;gap:7px;font-size:15px}.radios input{width:16px;height:16px}";
+    html += ".dock-row{display:flex;gap:8px;align-items:center;padding:4px 0}";
+    html += ".dock-row .n{color:var(--mut);font-size:13px;font-weight:600;width:14px;flex:0 0 auto}";
+    html += ".dock-row .ssid{flex:2;min-width:0}.dock-row .pass{flex:1;min-width:0}";
+    html += ".exgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}.exgrid input{min-width:0}";
+    html += ".zone{border-top:1px solid var(--bd);padding:14px 0 2px}.zone:first-of-type{border-top:0}.zone .zh{font-size:13px;font-weight:700;margin:0 0 8px}";
+    html += "table.files{width:100%;border-collapse:collapse;font-size:14px}table.files td{padding:9px 6px;border-top:1px solid var(--bd);vertical-align:middle}table.files tr:first-child td{border-top:0}";
+    html += ".files .fn{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;word-break:break-all}";
+    html += ".files .sz{color:var(--mut);white-space:nowrap;text-align:right}.files .st{white-space:nowrap;text-align:right}";
+    html += ".files a{color:var(--acc);text-decoration:none}.done{color:var(--ok);font-weight:600}";
+    html += ".actions{position:sticky;bottom:0;margin:20px -16px 0;padding:14px 16px;background:var(--bg);border-top:1px solid var(--bds)}.actions .inner{max-width:620px;margin:0 auto}";
+    html += "button.save{width:100%;border:1px solid var(--acd);border-radius:6px;padding:12px;font-size:16px;font-weight:600;color:#fff;background:var(--acc);cursor:pointer}";
+    html += ".foot{text-align:center;color:var(--mut);font-size:14px;padding:16px 0}.foot a{color:var(--acc)}";
+    html += "</style></head><body><div class=\"wrap\">";
 
-    // ---- WiGLE ----
-    html += "<h3>WiGLE</h3>";
-    html += "API Name: <input type=\"text\" name=\"wigle_user\" value=\"" + cur_wigle_user + "\"><br>";
-    html += "API Token: <input type=\"password\" name=\"wigle_token\" placeholder=\"leave blank to keep\"><br>";
+    html += "<header><h1>Wardriver Configuration</h1><div class=\"meta\">";
+    html += String(DEVICE_NAME) + " &middot; " + FIRMWARE_VERSION + " &middot; " + WiFi.localIP().toString() + " &middot; " + modeStr;
+    html += "</div></header><form action=\"/save\" method=\"POST\">";
 
-    // ---- WDG Wars ----
-    html += "<h3>WDG Wars</h3>";
-    html += "API Key: <input type=\"password\" name=\"wdg_key\" placeholder=\"leave blank to keep\">";
-    if (!cur_wdg_key.isEmpty()) html += " <em>(key saved)</em>";
-    html += "<br>";
-
-    // ---- Dock Mode ----
-    html += "<h3>Dock Mode</h3>";
-    html += "<small>The trigger SSID (e.g. K1T or a phone hotspot) causes the wardriver to pause, ";
-    html += "connect, and upload all pending logs to WiGLE and WDG Wars.</small><br><br>";
-    html += "Trigger SSID: <input type=\"text\" name=\"trigger_ssid\" value=\"" + cur_t_ssid + "\"><br>";
-    html += "Trigger Password: <input type=\"password\" name=\"trigger_pass\" placeholder=\"leave blank to keep\"><br>";
+    // ---- Device Mode ----
+    html += "<section><h2>Device Mode</h2><div class=\"radios\">";
+    html += "<label><input type=\"radio\" name=\"device_mode\" value=\"solo\"" + String(cur_mode == SOLO_MODE ? " checked" : "") + "> Solo</label>";
+    html += "<label><input type=\"radio\" name=\"device_mode\" value=\"core\"" + String(cur_mode == CORE_MODE ? " checked" : "") + "> Core</label>";
+    html += "<label><input type=\"radio\" name=\"device_mode\" value=\"node\"" + String(cur_mode == NODE_MODE ? " checked" : "") + "> Node</label>";
+    html += "</div></section>";
 
     // ---- Admin ----
-    html += "<h3>Admin</h3>";
-    html += "<small>Setting a password enables Basic Auth on the web UI. ";
-    html += "Recommended when using dock mode web server on a shared network.</small><br><br>";
-    html += "Admin Password: <input type=\"password\" name=\"admin_pass\" placeholder=\"leave blank to keep current\"><br>";
-    html += "<br>SD Debug Log: <input type=\"checkbox\" name=\"dbg_en\" value=\"true\"";
+    html += "<section><h2>Admin</h2>";
+    html += "<p class=\"hint\">Setting a password requires a login to open this page. Recommended on a shared network.</p>";
+    html += "<div class=\"field\"><label>Admin password";
+    if (set_admin) html += " <span class=\"saved\">Saved</span>";
+    html += "</label><input type=\"password\" name=\"admin_pass\" placeholder=\"" + String(set_admin ? DOTS : "") + "\"></div>";
+    html += "<label class=\"check\"><input type=\"checkbox\" name=\"dbg_en\" value=\"true\"";
     if (cur_dbg_en) html += " checked";
-    html += "> <small>Write all log entries to " + String(DEBUG_LOG_FILE) + " on SD card</small><br>";
-
-    html += "<br>Buffer scans w/o GPS fix: <input type=\"checkbox\" name=\"gps_buf\" value=\"true\"";
+    html += "><span class=\"lab\">Write debug log to SD<small>Saves every log entry to " + String(DEBUG_LOG_FILE) + "</small></span></label>";
+    html += "<label class=\"check\"><input type=\"checkbox\" name=\"gps_buf\" value=\"true\"";
     if (cur_gps_buf) html += " checked";
-    html += "> <small>Log networks seen while GPS has no lock; backfill positions on reacquire.</small><br>";
-    html += "&nbsp;&nbsp;Max buffer window (minutes, " + String(GPS_BUFFER_WINDOW_MIN_MIN) + "-" + String(GPS_BUFFER_WINDOW_MIN_MAX) + "): <input type=\"number\" name=\"gps_buf_win\" value=\"" + String(cur_gps_buf_win) + "\" min=\"" + String(GPS_BUFFER_WINDOW_MIN_MIN) + "\" max=\"" + String(GPS_BUFFER_WINDOW_MIN_MAX) + "\" step=\"5\" style=\"width:70px\"><br>";
+    html += "><span class=\"lab\">Buffer scans without a GPS fix<small>Log networks seen with no lock, then backfill positions once GPS returns</small></span></label>";
+    html += "<div class=\"field num\"><label>Buffer window (min, " + String(GPS_BUFFER_WINDOW_MIN_MIN) + "-" + String(GPS_BUFFER_WINDOW_MIN_MAX) + ")</label><input type=\"number\" class=\"num\" name=\"gps_buf_win\" value=\"" + String(cur_gps_buf_win) + "\" min=\"" + String(GPS_BUFFER_WINDOW_MIN_MIN) + "\" max=\"" + String(GPS_BUFFER_WINDOW_MIN_MAX) + "\" step=\"5\"></div></section>";
 
     // ---- Storage ----
-    html += "<h3>Storage</h3>";
-    html += "<small>Keep only the newest N wardrive logs on the SD card. Older logs are deleted ";
-    html += "automatically once they have been uploaded to every configured service; un-uploaded ";
-    html += "logs are always kept. Fewer logs means a faster boot.</small><br><br>";
-    html += "Keep newest logs (" + String(LOG_KEEP_MIN) + "-" + String(LOG_KEEP_MAX) + "): <input type=\"number\" name=\"log_keep\" value=\"" + String(cur_log_keep) + "\" min=\"" + String(LOG_KEEP_MIN) + "\" max=\"" + String(LOG_KEEP_MAX) + "\" step=\"1\" style=\"width:70px\"><br>";
+    html += "<section><h2>Storage</h2>";
+    html += "<p class=\"hint\">Keep only the newest logs on the SD card. Older logs are removed once uploaded to every service you use; anything not yet uploaded is kept.</p>";
+    html += "<div class=\"field num\"><label>Logs to keep (" + String(LOG_KEEP_MIN) + "-" + String(LOG_KEEP_MAX) + ")</label><input type=\"number\" class=\"num\" name=\"log_keep\" value=\"" + String(cur_log_keep) + "\" min=\"" + String(LOG_KEEP_MIN) + "\" max=\"" + String(LOG_KEEP_MAX) + "\"></div></section>";
 
-    // ---- SSID Exclusions ----
-    html += "<h3>SSID Exclusions (up to " + String(MAX_SSID_EXCLUSIONS) + ")</h3>";
-    html += "<small>Networks matching these SSIDs will never be logged.</small><br><br>";
+    // ---- WiGLE ----
+    html += "<section><h2>WiGLE</h2>";
+    html += "<div class=\"field\"><label>API name</label><input type=\"text\" name=\"wigle_user\" value=\"" + cur_wigle_user + "\"></div>";
+    html += "<div class=\"field\"><label>API token";
+    if (set_wt) html += " <span class=\"saved\">Saved</span>";
+    html += "</label><input type=\"password\" name=\"wigle_token\" placeholder=\"" + String(set_wt ? DOTS : "") + "\"></div></section>";
+
+    // ---- WDG Wars ----
+    html += "<section><h2>WDG Wars</h2>";
+    html += "<div class=\"field\"><label>API key";
+    if (set_wdg) html += " <span class=\"saved\">Saved</span>";
+    html += "</label><input type=\"password\" name=\"wdg_key\" placeholder=\"" + String(set_wdg ? DOTS : "") + "\"></div></section>";
+
+    // ---- Network ----
+    html += "<section><h2>Network</h2>";
+    html += "<p class=\"hint\">WiFi to join at boot for web access. Also used to upload if none of your docking networks are in range.</p>";
+    html += "<div class=\"field\"><label>WiFi name (SSID)</label><input type=\"text\" name=\"ssid\" value=\"" + cur_ssid + "\"></div>";
+    html += "<div class=\"field\"><label>WiFi password";
+    if (set_pass) html += " <span class=\"saved\">Saved</span>";
+    html += "</label><input type=\"password\" name=\"password\" placeholder=\"" + String(set_pass ? DOTS : "") + "\"></div></section>";
+
+    // ---- Docking Networks ----
+    html += "<section><h2>Docking Networks</h2>";
+    html += "<p class=\"hint\">Docks and uploads whenever any of these is in range (home, work, a hotspot), using that network's password. Leave a row blank to disable it.</p>";
+    for (int i = 0; i < MAX_DOCK_SSIDS; i++) {
+      bool dpset = !this->dock_pass_cache[i].isEmpty();
+      html += "<div class=\"dock-row\"><span class=\"n\">" + String(i + 1) + "</span>";
+      html += "<input type=\"text\" class=\"ssid\" name=\"ds_" + String(i) + "\" value=\"" + this->dock_ssid_cache[i] + "\" placeholder=\"Network name\">";
+      html += "<input type=\"password\" class=\"pass\" name=\"dp_" + String(i) + "\" placeholder=\"" + String(dpset ? DOTS : "Password") + "\"></div>";
+    }
+    html += "</section>";
+
+    // ---- Excluded Networks ----
+    html += "<section><h2>Excluded Networks</h2>";
+    html += "<p class=\"hint\">Networks with these names are never logged. Up to " + String(MAX_SSID_EXCLUSIONS) + ".</p>";
+    html += "<div class=\"exgrid\">";
     for (int i = 0; i < MAX_SSID_EXCLUSIONS; i++) {
       String val = settings.loadSetting<String>("sx_" + String(i));
-      html += "Exclusion " + String(i + 1) + ": <input type=\"text\" name=\"sx_" + String(i) +
-              "\" value=\"" + val + "\"><br>";
+      html += "<input type=\"text\" name=\"sx_" + String(i) + "\" value=\"" + val + "\" placeholder=\"" + String(i + 1) + "\">";
     }
+    html += "</div></section>";
 
     // ---- Geofences ----
-    html += "<h3>Geofences (up to " + String(MAX_GEOFENCES) + ")</h3>";
-    html += "<small>Wardriving pauses while inside any geofenced zone. ";
-    html += "If the trigger SSID is visible inside a zone, upload is attempted.</small><br><br>";
+    html += "<section><h2>Geofences</h2>";
+    html += "<p class=\"hint\">Wardriving pauses inside a zone. If a docking network is in range there, it uploads. Up to " + String(MAX_GEOFENCES) + ".</p>";
     for (int i = 0; i < MAX_GEOFENCES; i++) {
       String geoStr = settings.loadSetting<String>("geo_" + String(i));
       float  gLat = 0.0, gLon = 0.0;
@@ -3286,36 +3342,29 @@ void WiFiOps::serveConfigPage() {
         gRad   = geoDoc["rad"]   | 0;
         gLabel = geoDoc["label"] | "";
       }
-
-      html += "<strong>Zone " + String(i + 1) + "</strong><br>";
-      html += "&nbsp;&nbsp;Label: <input type=\"text\" name=\"geo_" + String(i) + "_label\" value=\"" + gLabel + "\"> ";
       float gRadMiles = gRad > 0 ? gRad / 1609.34 : 0.0;
       char gRadMilesStr[10];
       dtostrf(gRadMiles, 4, 2, gRadMilesStr);
-      html += "Radius (mi, 0 = off, else 0.10 to 1.00): <input type=\"number\" name=\"geo_" + String(i) + "_rad\" value=\"" + String(gRadMilesStr) + "\" min=\"0\" max=\"1.00\" step=\"0.05\" style=\"width:70px\"><br>";
 
-      html += "&nbsp;&nbsp;Lat: <input type=\"text\" name=\"geo_" + String(i) + "_lat\" value=\"" + String(gLat, 6) + "\" style=\"width:110px\"> ";
-      html += "Lon: <input type=\"text\" name=\"geo_" + String(i) + "_lon\" value=\"" + String(gLon, 6) + "\" style=\"width:110px\"><br><br>";
+      html += "<div class=\"zone\"><div class=\"zh\">Zone " + String(i + 1) + "</div>";
+      html += "<div class=\"field\"><label>Label</label><input type=\"text\" name=\"geo_" + String(i) + "_label\" value=\"" + gLabel + "\"></div>";
+      html += "<div class=\"row\">";
+      html += "<div class=\"field\"><label>Latitude</label><input type=\"text\" name=\"geo_" + String(i) + "_lat\" value=\"" + String(gLat, 6) + "\"></div>";
+      html += "<div class=\"field\"><label>Longitude</label><input type=\"text\" name=\"geo_" + String(i) + "_lon\" value=\"" + String(gLon, 6) + "\"></div>";
+      html += "<div class=\"field num\"><label>Radius (mi, 0 = off)</label><input type=\"number\" class=\"num\" name=\"geo_" + String(i) + "_rad\" value=\"" + String(gRadMilesStr) + "\" min=\"0\" max=\"1\" step=\"0.05\"></div>";
+      html += "</div></div>";
     }
-
-    // ---- Device Mode ----
-    html += "<h3>Device Mode</h3>";
-    html += "<input type=\"radio\" name=\"device_mode\" value=\"solo\"" + String(cur_mode == SOLO_MODE ? " checked" : "") + "> Solo<br>";
-    html += "<input type=\"radio\" name=\"device_mode\" value=\"core\"" + String(cur_mode == CORE_MODE ? " checked" : "") + "> Core<br>";
-    html += "<input type=\"radio\" name=\"device_mode\" value=\"node\"" + String(cur_mode == NODE_MODE ? " checked" : "") + "> Node<br><br>";
+    html += "</section>";
 
     // ---- Encryption ----
-    html += "<h3>Encryption (ESP-NOW)</h3>";
-    html += "ENOW Key: <input type=\"text\" name=\"enow_key\" placeholder=\"leave blank to keep\"><br>";
-    html += "Use Encryption: <input type=\"checkbox\" name=\"use_encryption\" value=\"true\"";
+    html += "<section><h2>Encryption (ESP-NOW)</h2>";
+    html += "<div class=\"field\"><label>Key</label><input type=\"text\" name=\"enow_key\" placeholder=\"\"></div>";
+    html += "<label class=\"check\"><input type=\"checkbox\" name=\"use_encryption\" value=\"true\"";
     if (cur_enc) html += " checked";
-    html += "><br><br>";
-
-    html += "<input type=\"submit\" value=\"Save Settings\">";
-    html += "</form>";
+    html += "><span class=\"lab\">Use encryption</span></label></section>";
 
     // ---- Files on SD Card ----
-    html += "<h2>Files on SD Card</h2>";
+    html += "<section><h2>Files on SD Card</h2><table class=\"files\">";
     File root = SD.open("/");
     if (root && root.isDirectory()) {
       File file = root.openNextFile();
@@ -3323,46 +3372,31 @@ void WiFiOps::serveConfigPage() {
         if (!file.isDirectory()) {
           String filename = file.name();
           if (filename.endsWith(".log") && filename != "debug.log") {
-            // Check sidecar upload status
             bool wigleDone = SD.exists("/sc/" + filename + ".wigle");
             bool wdgDone   = SD.exists("/sc/" + filename + ".wdg");
 
-            html += "<a href=\"/download?file=" + filename + "\">" + filename + "</a> ";
-            html += String(file.size()) + " B";
-
+            html += "<tr><td class=\"fn\">" + filename + "</td><td class=\"sz\">" + String((file.size() + 1023) / 1024) + " KB</td><td class=\"st\">";
             if (this->connected_as_client) {
-              // Upload links with per-service status
-              if (!wigleDone)
-                html += " | <a href=\"/upload?file=" + filename + "&svc=wigle\">Upload WiGLE</a>";
-              else
-                html += " | <em>WiGLE&check;</em>";
-
-              if (!wdgDone)
-                html += " | <a href=\"/upload?file=" + filename + "&svc=wdg\">Upload WDG</a>";
-              else
-                html += " | <em>WDG&check;</em>";
-
-              // Retry link if either failed
-              if (wigleDone && wdgDone)
-                html += " | <a href=\"/upload?file=" + filename + "&svc=both&retry=1\">Retry All</a>";
-              else if (!wigleDone || !wdgDone)
-                html += " | <a href=\"/upload?file=" + filename + "&svc=both\">Upload Both</a>";
+              if (wigleDone) html += "<span class=\"done\">WiGLE&check;</span> ";
+              else           html += "<a href=\"/upload?file=" + filename + "&svc=wigle\">Upload WiGLE</a> ";
+              if (wdgDone)   html += "<span class=\"done\">WDG&check;</span> ";
+              else           html += "<a href=\"/upload?file=" + filename + "&svc=wdg\">Upload WDG</a> ";
             }
-            html += "<br>";
+            html += "&nbsp;<a href=\"/download?file=" + filename + "\">download</a></td></tr>";
           } else if (!filename.endsWith(".wigle") && !filename.endsWith(".wdg")) {
-            // Show non-log, non-sidecar files for download only
-            html += "<a href=\"/download?file=" + filename + "\">" + filename + "</a> ";
-            html += String(file.size()) + " B<br>";
+            html += "<tr><td class=\"fn\">" + filename + "</td><td class=\"sz\">" + String((file.size() + 1023) / 1024) + " KB</td><td class=\"st\"><a href=\"/download?file=" + filename + "\">download</a></td></tr>";
           }
         }
         file = root.openNextFile();
       }
     } else {
-      html += "Unable to access SD card.<br>";
+      html += "<tr><td>Unable to access SD card.</td></tr>";
     }
+    html += "</table></section>";
 
-    html += "<br><a href='/log'>&#128196; View Live Log</a>";
-    html += "</body></html>";
+    html += "<div class=\"foot\">&#128196; <a href=\"/log\">View live log</a></div>";
+    html += "<div class=\"actions\"><div class=\"inner\"><button class=\"save\" type=\"submit\">Save Settings</button></div></div>";
+    html += "</form></div></body></html>";
     server.send(200, "text/html", html);
   });
 
@@ -3403,15 +3437,22 @@ void WiFiOps::serveConfigPage() {
       anyChange = true;
     }
 
-    // Dock Mode
-    if (server.hasArg("trigger_ssid")) {
-      settings.saveSetting<bool>(TRIGGER_SSID_NAME, server.arg("trigger_ssid"));
-      anyChange = true;
+    // Docking networks (SSID always saved so a row can be cleared; password
+    // only overwritten when a new one is typed, so "Saved" fields are kept).
+    bool dockChanged = false;
+    for (int i = 0; i < MAX_DOCK_SSIDS; i++) {
+      String sk = String(DOCK_SSID_PREFIX) + i;
+      String pk = String(DOCK_PASS_PREFIX) + i;
+      if (server.hasArg(sk)) {
+        settings.saveSetting<bool>(sk, server.arg(sk));
+        anyChange = true; dockChanged = true;
+      }
+      if (server.hasArg(pk) && server.arg(pk) != "") {
+        settings.saveSetting<bool>(pk, server.arg(pk));
+        anyChange = true; dockChanged = true;
+      }
     }
-    if (server.hasArg("trigger_pass") && server.arg("trigger_pass") != "") {
-      settings.saveSetting<bool>(TRIGGER_PASS_NAME, server.arg("trigger_pass"));
-      anyChange = true;
-    }
+    if (dockChanged) this->loadDockCache();
 
     // Admin password
     if (server.hasArg("admin_pass") && server.arg("admin_pass") != "") {
@@ -3856,9 +3897,51 @@ bool WiFiOps::begin(bool skip_admin, int mode_override) {
 // Synchronous passive scan for the configured trigger SSID.
 // Safe to call while in promiscuous mode (cancels ongoing async scan first).
 // Returns true if the trigger SSID is visible.
+// ---- Docking-network helpers (multi-dock) -------------------------------
+String WiFiOps::dockSSID(int i) {
+  if (i < 0 || i >= MAX_DOCK_SSIDS) return "";
+  return this->dock_ssid_cache[i];
+}
+String WiFiOps::dockPass(int i) {
+  if (i < 0 || i >= MAX_DOCK_SSIDS) return "";
+  return this->dock_pass_cache[i];
+}
+int WiFiOps::matchDockSSID(const String& ssid) {
+  if (ssid.isEmpty()) return -1;
+  for (int i = 0; i < MAX_DOCK_SSIDS; i++)
+    if (this->dock_ssid_cache[i].length() && this->dock_ssid_cache[i] == ssid) return i;
+  return -1;
+}
+bool WiFiOps::anyDockConfigured() {
+  for (int i = 0; i < MAX_DOCK_SSIDS; i++)
+    if (this->dock_ssid_cache[i].length()) return true;
+  return false;
+}
+void WiFiOps::loadDockCache() {
+  for (int i = 0; i < MAX_DOCK_SSIDS; i++) {
+    this->dock_ssid_cache[i] = settings.loadSetting<String>(String(DOCK_SSID_PREFIX) + i);
+    this->dock_pass_cache[i] = settings.loadSetting<String>(String(DOCK_PASS_PREFIX) + i);
+  }
+}
+void WiFiOps::migrateDockSSIDs() {
+  String legacy = settings.loadSetting<String>(TRIGGER_SSID_NAME);
+  if (legacy.isEmpty()) return;                              // nothing to migrate
+  if (!this->dock_ssid_cache[0].isEmpty()) return;           // slot 0 already set — don't clobber
+  String legacyPass = settings.loadSetting<String>(TRIGGER_PASS_NAME);
+  settings.saveSetting<bool>(String(DOCK_SSID_PREFIX) + "0", legacy);
+  settings.saveSetting<bool>(String(DOCK_PASS_PREFIX) + "0", legacyPass);
+  Logger::log(GUD_MSG, "[DOCK] Migrated legacy trigger '" + legacy + "' into docking slot 1");
+}
+void WiFiOps::initDockConfig() {
+  this->loadDockCache();      // ensures ds_/dp_ keys exist (as String) and caches them
+  this->migrateDockSSIDs();   // fold legacy single trigger into slot 0 if empty
+  this->loadDockCache();      // refresh cache with any migrated value
+}
+
+// Scan for any configured docking network. Records the strongest match's RSSI
+// (trigger_last_rssi) and index (dock_matched_idx). Returns true if any present.
 bool WiFiOps::scanForTriggerSSID() {
-  String trigSSID = settings.loadSetting<String>(TRIGGER_SSID_NAME);
-  if (trigSSID.isEmpty()) return false;
+  if (!this->anyDockConfigured()) return false;
 
   this->stopPromiscuousCapture();
 
@@ -3866,22 +3949,71 @@ bool WiFiOps::scanForTriggerSSID() {
   if (WiFi.scanComplete() == WIFI_SCAN_RUNNING) return false;
   WiFi.scanDelete();
 
-  //Logger::log(STD_MSG, "Scanning for trigger networks...");
-  uint32_t start_time = millis();
   int n = WiFi.scanNetworks(false, true, false, 100); // synchronous, include hidden
-  //Logger::log(STD_MSG, "Scan completed in " + String(millis() - start_time) + "ms");
 
   bool found = false;
   this->trigger_last_rssi = -127;
+  this->dock_matched_idx  = -1;
   for (int i = 0; i < n; i++) {
-    if (WiFi.SSID(i) == trigSSID) {
+    int di = this->matchDockSSID(WiFi.SSID(i));
+    if (di >= 0) {
       found = true;
       int rs = WiFi.RSSI(i);
-      if (rs > this->trigger_last_rssi) this->trigger_last_rssi = rs;
+      if (rs > this->trigger_last_rssi) { this->trigger_last_rssi = rs; this->dock_matched_idx = di; }
     }
   }
   WiFi.scanDelete();
   return found;
+}
+
+// Scan and connect to a present docking network (strongest wins), using its own
+// password. Falls back to the boot Network (s/p) if no docking net is in range.
+bool WiFiOps::connectForUpload() {
+  this->stopPromiscuousCapture();
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.setBandMode(WIFI_BAND_MODE_AUTO);
+  if (WiFi.scanComplete() == WIFI_SCAN_RUNNING) delay(200);
+  WiFi.scanDelete();
+
+  int n = WiFi.scanNetworks(false, true, false, 100);
+  int bestDock = -1, bestRssi = -999;
+  String userSSID = settings.loadSetting<String>("s");
+  bool userSeen = false;
+  for (int i = 0; i < n; i++) {
+    String s = WiFi.SSID(i);
+    int rs = WiFi.RSSI(i);
+    int di = this->matchDockSSID(s);
+    if (di >= 0 && rs > bestRssi) { bestRssi = rs; bestDock = di; }
+    if (!userSSID.isEmpty() && s == userSSID) userSeen = true;
+  }
+  WiFi.scanDelete();
+
+  String ssid, pass;
+  if (bestDock >= 0) {
+    ssid = this->dockSSID(bestDock); pass = this->dockPass(bestDock);
+    // If this docking net has no password of its own but matches the Network,
+    // reuse the Network password (covers the legacy single-trigger migration).
+    if (pass.isEmpty() && ssid == userSSID) pass = settings.loadSetting<String>("p");
+    Logger::log(STD_MSG, "[DOCK] Upload via docking net: " + ssid + " (" + String(bestRssi) + ")");
+  } else if (userSeen) {
+    ssid = userSSID; pass = settings.loadSetting<String>("p");
+    Logger::log(STD_MSG, "[DOCK] No docking net present — fallback to Network: " + ssid);
+  } else {
+    Logger::log(WARN_MSG, "[DOCK] No docking net or Network in range — skipping upload");
+    return false;
+  }
+
+  this->user_ap_ssid = ssid;
+  this->wigle_user   = settings.loadSetting<String>("wu");
+  this->wigle_token  = settings.loadSetting<String>("wt");
+
+  WiFi.begin(ssid.c_str(), pass.c_str());
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < STATION_CONNECT_TIMEOUT) {
+    delay(500); Serial.print(".");
+  }
+  return WiFi.status() == WL_CONNECTED;
 }
 
 // Debounce dock entry: require DOCK_ARM_SIGHTINGS consecutive sightings of the
@@ -4226,15 +4358,14 @@ void WiFiOps::main(uint32_t currentTime, bool in_sd_files) {
     this->dock_state == DOCK_STATE_NONE &&
     this->run_mode == SOLO_MODE &&
     !in_sd_files) {
-    String trigSSID = settings.loadSetting<String>(TRIGGER_SSID_NAME);
-    if (!trigSSID.isEmpty() && !rtc_dock_done &&
+    if (this->anyDockConfigured() && !rtc_dock_done &&
       currentTime - this->standby_scan_time >= STANDBY_SCAN_INTERVAL &&
       currentTime - this->dock_depart_time >= 60000) { // 60s cooldown after departing
       this->standby_scan_time = currentTime;
       //Logger::log(STD_MSG, "Calling scanForTriggerSSID from main");
       bool seen = this->scanForTriggerSSID();
       if (this->armDock(seen, this->trigger_last_rssi)) {
-        Logger::log(STD_MSG, "[DOCK] Trigger SSID confirmed in standby: " + trigSSID);
+        Logger::log(STD_MSG, "[DOCK] Docking network confirmed in standby: " + this->dockSSID(this->dock_matched_idx));
         this->dock_webui_only       = !gps.getFixStatus();
         this->dock_state            = DOCK_STATE_CONNECTING;
         this->dock_connect_attempts = 0;

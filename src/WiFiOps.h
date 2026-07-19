@@ -248,6 +248,12 @@ class WiFiOps
     uint8_t  dock_arm_count        = 0;    // consecutive qualifying sightings (dock debounce)
     bool     armDock(bool seen, int rssi); // debounce: true only after N strong sightings
 
+    String   dock_ssid_cache[MAX_DOCK_SSIDS]; // cached docking network SSIDs (avoid per-scan JSON parse)
+    String   dock_pass_cache[MAX_DOCK_SSIDS];
+    int      dock_matched_idx      = -1;   // docking network that triggered/should connect (-1 none)
+    int      matchDockSSID(const String& ssid); // index of matching docking network, or -1
+    bool     connectForUpload();           // scan + connect to a present docking net (fallback: Network)
+
     bool scanForTriggerSSID();    // synchronous passive scan for trigger SSID
     void runDockMode(uint32_t currentTime);
     void handleDockConnecting();
@@ -302,6 +308,12 @@ class WiFiOps
     int  logKeepCount();                        // configured "keep newest N logs" (clamped)
     void pruneOldLogs();                        // delete oldest fully-synced logs beyond N
     void migrateSidecars();                     // one-time: move legacy root markers into /sc/
+    void initDockConfig();                       // migrate legacy trigger + load docking-net cache
+    void loadDockCache();                        // (re)load ds_/dp_ into cache (call after /save)
+    void migrateDockSSIDs();                     // one-time: copy legacy t_ssid/t_pass into ds_0/dp_0
+    String dockSSID(int i);                      // cached docking network SSID
+    String dockPass(int i);                      // cached docking network password
+    bool anyDockConfigured();                    // true if any docking network SSID is set
     void startWardrivingFromDock();             // leave dock and resume wardriving (Dock Menu action)
     bool dock_menu_open = false;                // UI dock menu is up — pause dock redraw/scan
     bool dock_autoopen_menu = false;            // request UI to open the Dock Menu (boot handoff)

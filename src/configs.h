@@ -167,6 +167,9 @@
 //// SSID Exclusion stuff
 #define MAX_SSID_EXCLUSIONS   10
 
+//// Docking networks (connect + upload targets; presence triggers a dock)
+#define MAX_DOCK_SSIDS        5
+
 //// Dock mode stuff
 #define DOCK_CONNECT_ATTEMPTS  3
 #define DOCK_CONNECT_TIMEOUT   10 * 1000   // 10 seconds per attempt
@@ -178,8 +181,8 @@
 #define DOCK_FAIL_DISPLAY_MS   20 * 1000   // show K1T failure message for 20s
 #define STANDBY_SCAN_INTERVAL  30 * 1000   // scan for K1T every 30s while in standby (no GPS)
 
-//// Settings JSON buffer — bumped from 2048 to handle 30 settings entries
-#define SETTINGS_JSON_SIZE     4096
+//// Settings JSON buffer — sized for ~40 settings entries (adds 10 docking-net keys)
+#define SETTINGS_JSON_SIZE     6144
 
 // ============================================================
 // Chunk 6: Dock mode state constants
