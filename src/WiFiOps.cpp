@@ -105,11 +105,30 @@ struct promisc_ap_t {
   uint8_t channel;
   int8_t  rssi;
   uint8_t auth;
+  uint8_t kind;
 };
 
 static QueueHandle_t g_ap_queue = nullptr;
 static const uint16_t AP_QUEUE_LEN = 96;
 static const uint32_t BLE_SCAN_INTERVAL_MS = 2000;
+
+static const uint8_t FLOCK_OUIS[][3] = {
+  {0x70,0xC9,0x4E},{0x3C,0x91,0x80},{0xD8,0xF3,0xBC},{0x80,0x30,0x49},{0xB8,0x35,0x32},
+  {0x14,0x5A,0xFC},{0x74,0x4C,0xA1},{0x08,0x3A,0x88},{0x9C,0x2F,0x9D},{0xC0,0x35,0x32},
+  {0x94,0x08,0x53},{0xE4,0xAA,0xEA},{0xF4,0x6A,0xDD},{0xF8,0xA2,0xD6},{0x24,0xB2,0xB9},
+  {0x00,0xF4,0x8D},{0xD0,0x39,0x57},{0xE8,0xD0,0xFC},{0xE0,0x4F,0x43},{0xB8,0x1E,0xA4},
+  {0x70,0x08,0x94},{0x58,0x8E,0x81},{0xEC,0x1B,0xBD},{0x3C,0x71,0xBF},{0x58,0x00,0xE3},
+  {0x90,0x35,0xEA},{0x5C,0x93,0xA2},{0x64,0x6E,0x69},{0x48,0x27,0xEA},{0xA4,0xCF,0x12},
+  {0x82,0x6B,0xF2},{0xB4,0x1E,0x52}
+};
+static const uint8_t FLOCK_OUI_COUNT = sizeof(FLOCK_OUIS) / 3;
+
+static inline bool fuzz_is_flock_oui(const uint8_t* mac) {
+  for (uint8_t i = 0; i < FLOCK_OUI_COUNT; i++)
+    if (mac[0] == FLOCK_OUIS[i][0] && mac[1] == FLOCK_OUIS[i][1] && mac[2] == FLOCK_OUIS[i][2])
+      return true;
+  return false;
+}
 
 static void promiscuous_rx_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
   if (type != WIFI_PKT_MGMT || g_ap_queue == nullptr) return;
@@ -118,14 +137,33 @@ static void promiscuous_rx_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
   const uint8_t *frame = ppkt->payload;
   const uint16_t len = ppkt->rx_ctrl.sig_len;
 
-  if (frame == nullptr || len < 36) return;
+  if (frame == nullptr || len < 24) return;
 
   const uint8_t fc0 = frame[0];
   if (((fc0 >> 2) & 0x03) != 0) return;
   const uint8_t subtype = (fc0 >> 4) & 0x0F;
+
+  if (subtype == 4) {
+    const uint8_t *tx = frame + 10;
+    if (!fuzz_is_flock_oui(tx)) return;
+    if (len < 26 || frame[24] != 0 || frame[25] != 0) return;
+    promisc_ap_t fr;
+    memcpy(fr.bssid, tx, 6);
+    fr.rssi    = ppkt->rx_ctrl.rssi;
+    fr.channel = ppkt->rx_ctrl.channel;
+    fr.auth    = 0;
+    fr.ssid[0] = '\0';
+    fr.kind    = 1;
+    BaseType_t fhpw = pdFALSE;
+    xQueueSendFromISR(g_ap_queue, &fr, &fhpw);
+    return;
+  }
+
   if (subtype != 8 && subtype != 5) return;
+  if (len < 36) return;
 
   promisc_ap_t r;
+  r.kind = 0;
   memcpy(r.bssid, frame + 16, 6);
   r.rssi    = ppkt->rx_ctrl.rssi;
   r.channel = ppkt->rx_ctrl.channel;
@@ -2178,6 +2216,16 @@ void WiFiOps::runPromiscuousSolo(uint32_t currentTime) {
 
   promisc_ap_t r;
   while (xQueueReceive(g_ap_queue, &r, 0) == pdTRUE) {
+    if (r.kind == 1) {
+      if (!this->seen_mac(r.bssid)) {
+        this->save_mac(r.bssid);
+        this->noteFuzzHit(FUZZ_CAM, "Flock?", (int)r.rssi, nullptr);
+        char fm[18];
+        sprintf(fm, "%02X:%02X:%02X:%02X:%02X:%02X", r.bssid[0], r.bssid[1], r.bssid[2], r.bssid[3], r.bssid[4], r.bssid[5]);
+        Logger::log(GUD_MSG, "[FLOCK] probe " + String(fm) + " ch" + String((int)r.channel) + " " + (String)(int)r.rssi + "dBm " + gps.getLat() + "," + gps.getLon());
+      }
+      continue;
+    }
     String ssid = String(r.ssid);
     int di = this->matchDockSSID(ssid);
     if (di >= 0) {
