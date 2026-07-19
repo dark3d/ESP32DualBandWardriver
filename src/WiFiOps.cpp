@@ -213,10 +213,10 @@ class scanCallbacks : public NimBLEScanCallbacks {
         if (advertisedDevice->haveManufacturerData()) {
           std::string ble_md0 = advertisedDevice->getManufacturerData(0);
           if (ble_md0.length() >= 2 && (uint8_t)ble_md0[0] == FLOCK_BLE_CID_LO && (uint8_t)ble_md0[1] == FLOCK_BLE_CID_HI)
-            wifi_ops.noteFuzzHit(FUZZ_CAM, "Flock", advertisedDevice->getRSSI());
+            wifi_ops.noteFuzzHit(FUZZ_CAM, "Flock", advertisedDevice->getRSSI(), nullptr);
         }
         if (macBytes[0] == AXON_OUI0 && macBytes[1] == AXON_OUI1 && macBytes[2] == AXON_OUI2)
-          wifi_ops.noteFuzzHit(FUZZ_LEO, "Axon?", advertisedDevice->getRSSI());
+          wifi_ops.noteFuzzHit(FUZZ_LEO, "Axon?", advertisedDevice->getRSSI(), nullptr);
 
         if (can_stamp) {
           gps_snapshot_t snap = gps.getSnapshot();
@@ -2021,9 +2021,9 @@ void WiFiOps::logWardriveAP(uint8_t* bssid_raw, const String& ssid_in, int chann
         this->setCurrent2g4Count(this->getCurrent2g4Count() + 1);
 
       if (bssid_raw[0] == CRADLEPOINT_OUI0 && bssid_raw[1] == CRADLEPOINT_OUI1 && bssid_raw[2] == CRADLEPOINT_OUI2)
-        this->noteFuzzHit(FUZZ_LEO, ssid.length() ? ssid : String("Cradlepoint"), rssi);
+        this->noteFuzzHit(FUZZ_LEO, ssid.length() ? ssid : String("Cradlepoint"), rssi, bssid_raw);
       else if (bssid_raw[0] == AXON_OUI0 && bssid_raw[1] == AXON_OUI1 && bssid_raw[2] == AXON_OUI2)
-        this->noteFuzzHit(FUZZ_LEO, ssid.length() ? ssid : String("Axon?"), rssi);
+        this->noteFuzzHit(FUZZ_LEO, ssid.length() ? ssid : String("Axon?"), rssi, bssid_raw);
     }
   }
   else if (this->run_mode == NODE_MODE) {
@@ -2046,7 +2046,32 @@ void WiFiOps::logWardriveAP(uint8_t* bssid_raw, const String& ssid_in, int chann
   }
 }
 
-void WiFiOps::noteFuzzHit(uint8_t cat, const String& label, int rssi) {
+bool WiFiOps::fuzzLeoSibling(const uint8_t* mac) {
+  for (uint8_t i = 0; i < this->fuzz_leo_mem_count; i++) {
+    uint8_t* s = this->fuzz_leo_macs[i];
+    if (s[0] == mac[0] && s[1] == mac[1] && s[2] == mac[2] && s[3] == mac[3] && s[4] == mac[4]) {
+      int d = (int)s[5] - (int)mac[5];
+      if (d < 0) d = -d;
+      if (d != 0 && d <= FUZZ_SIBLING_DELTA) return true;
+    }
+  }
+  return false;
+}
+
+void WiFiOps::fuzzRememberLeo(const uint8_t* mac) {
+  for (uint8_t i = 0; i < this->fuzz_leo_mem_count; i++)
+    if (memcmp(this->fuzz_leo_macs[i], mac, 6) == 0) return;
+  memcpy(this->fuzz_leo_macs[this->fuzz_leo_mem_cursor % FUZZ_LEO_MEM], mac, 6);
+  this->fuzz_leo_mem_cursor++;
+  if (this->fuzz_leo_mem_count < FUZZ_LEO_MEM) this->fuzz_leo_mem_count++;
+}
+
+void WiFiOps::noteFuzzHit(uint8_t cat, const String& label, int rssi, const uint8_t* mac) {
+  if (cat == FUZZ_LEO && mac != nullptr) {
+    bool sibling = this->fuzzLeoSibling(mac);
+    this->fuzzRememberLeo(mac);
+    if (sibling) return;
+  }
   if (cat == FUZZ_CAM) this->fuzz_cam_count++;
   else if (cat == FUZZ_LEO) this->fuzz_leo_count++;
   else return;

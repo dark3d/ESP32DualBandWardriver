@@ -97,6 +97,9 @@
 #define FUZZ_FLASH_MS 2500
 #define FUZZ_FLASH_TOGGLE_MS 250
 
+#define FUZZ_LEO_MEM 16
+#define FUZZ_SIBLING_DELTA 4
+
 #define U_BTN 9
 #define D_BTN 8
 #define C_BTN 1

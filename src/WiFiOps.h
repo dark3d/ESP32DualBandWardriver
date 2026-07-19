@@ -291,7 +291,12 @@ class WiFiOps
     uint8_t  fuzz_last_cat  = FUZZ_NONE;
     int      fuzz_last_rssi = 0;
     char     fuzz_last_label[24] = {0};
-    void noteFuzzHit(uint8_t cat, const String& label, int rssi);
+    uint8_t  fuzz_leo_macs[FUZZ_LEO_MEM][6];
+    uint8_t  fuzz_leo_mem_count  = 0;
+    uint8_t  fuzz_leo_mem_cursor = 0;
+    void noteFuzzHit(uint8_t cat, const String& label, int rssi, const uint8_t* mac);
+    bool fuzzLeoSibling(const uint8_t* mac);
+    void fuzzRememberLeo(const uint8_t* mac);
 
     uint8_t current_assignment_version = 1;
     uint8_t current_assigned_scan_idx = 0;
