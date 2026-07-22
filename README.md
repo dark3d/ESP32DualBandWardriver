@@ -1,5 +1,5 @@
-# ESP32 Dual Band Wardriver
-Based on the ESP32-C5-DevKitC-1 v1.2, the ESP32 Dual Band Wardriver offers wardriving capabilities for 2.4GHz and 5GHz WiFi as well as BLE.
+# Dark3D Firmware - JCMK ESP32 Dual Band Wardriver
+Firmware compatible with the ESP32-C5-DevKitC-1 v1.2, the ESP32 Dual Band Wardriver offers wardriving capabilities for 2.4GHz and 5GHz WiFi as well as BLE.
 Logs are formatted for WiGLE and saved to SD card.
 
 ## Table of Contents
