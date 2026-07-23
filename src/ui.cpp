@@ -661,7 +661,7 @@ void UI::drawFuzzbuster(uint32_t currentTime, bool do_now) {
         display.tft->fillScreen(bg);
         display.tft->setTextColor(ST77XX_WHITE);
         display.tft->setTextSize(2);
-        String big = (wifi_ops.fuzz_last_cat == FUZZ_CAM) ? String("FLOCK") : String("COP GEAR");
+        String big = (wifi_ops.fuzz_last_cat == FUZZ_CAM) ? String("FLOCK") : String("FLEET");
         int bw = big.length() * 12;
         display.tft->setCursor((TFT_WIDTH - bw) / 2 > 0 ? (TFT_WIDTH - bw) / 2 : 0, 20);
         display.tft->print(big);
@@ -706,8 +706,8 @@ void UI::drawFuzzbuster(uint32_t currentTime, bool do_now) {
   display.tft->setCursor((half - 3 * 6) / 2, 16);
   display.tft->print("CAM");
   display.tft->setTextColor(ST77XX_CYAN, ST77XX_BLACK);
-  display.tft->setCursor(half + (half - 3 * 6) / 2, 16);
-  display.tft->print("COP");
+  display.tft->setCursor(half + (half - 5 * 6) / 2, 16);
+  display.tft->print("FLEET");
 
   display.tft->setTextSize(2);
   char cbuf[12];

@@ -28,11 +28,11 @@ extern Switches c_btn;
 // Display modes — cycle with UP/DOWN buttons
 // ============================================================
 #define STATS_NEW    0  // New large-format stats screen (Screen 1)
-#define FULL_STATS   1  // Original stats screen (Screen 2)
-#define AIRCRAFT     2  // ADS-B aircraft screen (Screen 3)
-#define FUZZBUSTER   3  // Surveillance detector (Screen 4)
+#define AIRCRAFT     1  // ADS-B aircraft screen (Screen 2)
+#define FUZZBUSTER   2  // Surveillance detector (Screen 3)
+#define FULL_STATS   3  // Original stats screen (Screen 4)
 #define SD_FILES     4  // SD file menu
-#define INCOGNITO    5  // Blank screen (Screen 5)
+#define INCOGNITO    5  // Blank screen
 
 #define MAX_DISPLAY_MODES 6
 

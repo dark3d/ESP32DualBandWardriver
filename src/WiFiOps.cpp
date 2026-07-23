@@ -2121,7 +2121,7 @@ void WiFiOps::noteFuzzHit(uint8_t cat, const String& label, int rssi, const uint
   l.replace("\r", " ");
   strncpy(this->fuzz_last_label, l.c_str(), sizeof(this->fuzz_last_label) - 1);
   this->fuzz_last_label[sizeof(this->fuzz_last_label) - 1] = '\0';
-  Logger::log(GUD_MSG, "[FUZZ] " + String(cat == FUZZ_CAM ? "CAM " : "LEO ") + label + " " + String(rssi));
+  Logger::log(GUD_MSG, "[FUZZ] " + String(cat == FUZZ_CAM ? "CAM " : "FLEET ") + label + " " + String(rssi));
 }
 
 void WiFiOps::processWardrive(uint16_t networks) {
