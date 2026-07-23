@@ -281,6 +281,7 @@ class WiFiOps
     bool isDocked() { return dock_state != DOCK_STATE_NONE; }
     uint8_t getNodeCount() { return getActiveNodeCount(); }
     int aircraftCount();
+    int getAircraftList(AircraftRecord* out, int max_out);
     uint32_t aircraftSessionTotal();
     void flushAircraftBuffer(uint32_t now);
 

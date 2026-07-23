@@ -683,6 +683,20 @@ int WiFiOps::aircraftCount() {
   return n;
 }
 
+int WiFiOps::getAircraftList(AircraftRecord* out, int max_out) {
+  if (!aircraft_table || !out || max_out <= 0) return 0;
+  uint32_t now = millis();
+  int n = 0;
+  portENTER_CRITICAL(&aircraft_mux);
+  for (int i = 0; i < MAX_AIRCRAFT && n < max_out; i++) {
+    if (!aircraft_table[i].used) continue;
+    if (now - aircraft_table[i].last_seen_ms > AIRCRAFT_TIMEOUT_MS) continue;
+    out[n++] = aircraft_table[i];
+  }
+  portEXIT_CRITICAL(&aircraft_mux);
+  return n;
+}
+
 void WiFiOps::markAllActiveNodesAdminDirty() {
   for (uint8_t i = 0; i < MAX_NODES; i++) {
     if (node_table[i].flags & NODE_FLAG_ACTIVE) {

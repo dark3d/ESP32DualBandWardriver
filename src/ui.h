@@ -29,10 +29,11 @@ extern Switches c_btn;
 // ============================================================
 #define STATS_NEW    0  // New large-format stats screen (Screen 1)
 #define FULL_STATS   1  // Original stats screen (Screen 2)
-#define SD_FILES     2  // SD file menu
-#define INCOGNITO    3  // Blank screen (Screen 3)
+#define AIRCRAFT     2  // ADS-B aircraft screen (Screen 3)
+#define SD_FILES     3  // SD file menu
+#define INCOGNITO    4  // Blank screen (Screen 4)
 
-#define MAX_DISPLAY_MODES 4
+#define MAX_DISPLAY_MODES 5
 
 struct MenuNode {
   String name;
@@ -86,6 +87,7 @@ class UI {
     void updateStats(uint32_t currentTime, uint32_t wifiCount, uint32_t count2g4,
                      uint32_t count5g, uint32_t bleCount, int gpsSats,
                      int8_t batteryLevel, bool do_now = false);
+    void drawAircraft(uint32_t currentTime, bool do_now);
     void setDisplayMode(uint8_t new_mode);
     void addNodes(Menu * menu, String name, uint8_t color, Menu * child, int place,
                   std::function<void()> callable, uint32_t size = 0,

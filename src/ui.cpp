@@ -544,7 +544,7 @@ void UI::drawStatsNew(uint32_t currentTime, uint32_t count2g4, uint32_t count5g,
     display.tft->print("                          ");
   }
 
-  if (wifi_ops.run_mode == CORE_MODE) {
+  if (wifi_ops.run_mode == CORE_MODE || wifi_ops.aircraftSessionTotal() > 0) {
     display.tft->setCursor(0, 80 - 9);
     display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
     display.tft->print("Aircraft: ");
@@ -555,10 +555,71 @@ void UI::drawStatsNew(uint32_t currentTime, uint32_t count2g4, uint32_t count5g,
     display.tft->setTextColor(0xF81F, ST77XX_BLACK);
     display.tft->print(String(wifi_ops.aircraftSessionTotal()));
 
-    String node_num = "Nodes: " + String(wifi_ops.getNodeCount());
-    display.tft->setCursor(TFT_WIDTH - node_num.length() * 6, 80 - 9);
-    display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-    display.tft->print(node_num);
+    if (wifi_ops.run_mode == CORE_MODE) {
+      String node_num = "Nodes: " + String(wifi_ops.getNodeCount());
+      display.tft->setCursor(TFT_WIDTH - node_num.length() * 6, 80 - 9);
+      display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+      display.tft->print(node_num);
+    }
+  }
+}
+
+// ============================================================
+// Screen 3 — ADS-B aircraft (counters + live flight list)
+// ============================================================
+void UI::drawAircraft(uint32_t currentTime, bool do_now) {
+
+  if ((currentTime - lastUpdateTime < UI_UPDATE_TIME) && (!do_now)) return;
+  lastUpdateTime = currentTime;
+
+  display.clearScreen();
+  display.tft->setRotation(3);
+  display.tft->setTextWrap(false);
+  display.tft->setTextSize(1);
+
+  // ---- Header: title (left) + Now/Session counters (right) ----
+  display.tft->setCursor(0, 0);
+  display.tft->setTextColor(ST77XX_CYAN, ST77XX_BLACK);
+  display.tft->print("AIRCRAFT");
+
+  String counts = "Now:" + String(wifi_ops.aircraftCount()) +
+                  " Ses:" + String(wifi_ops.aircraftSessionTotal());
+  display.tft->setCursor(TFT_WIDTH - counts.length() * 6, 0);
+  display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  display.tft->print(counts);
+
+  // ---- Live flight list ----
+  AircraftRecord list[7];
+  int n = wifi_ops.getAircraftList(list, 7);
+
+  if (n == 0) {
+    display.tft->setCursor(0, 24);
+    display.tft->setTextColor(ST77XX_YELLOW, ST77XX_BLACK);
+    display.tft->print("No aircraft heard");
+    return;
+  }
+
+  for (int i = 0; i < n; i++) {
+    int y = 12 + i * 9;
+
+    char flight[9];
+    int fi = 0;
+    for (int c = 0; c < 8 && list[i].flight[c]; c++) {
+      if (list[i].flight[c] != ' ') flight[fi++] = list[i].flight[c];
+    }
+    flight[fi] = '\0';
+
+    char line[27];
+    if (fi > 0)
+      snprintf(line, sizeof(line), "%-8s %5ldft %3ukt",
+               flight, (long)list[i].alt_baro, list[i].gs);
+    else
+      snprintf(line, sizeof(line), "%06lX   %5ldft %3ukt",
+               (unsigned long)list[i].icao, (long)list[i].alt_baro, list[i].gs);
+
+    display.tft->setCursor(0, y);
+    display.tft->setTextColor(ST77XX_GREEN, ST77XX_BLACK);
+    display.tft->print(line);
   }
 }
 
@@ -933,6 +994,10 @@ void UI::main(uint32_t currentTime) {
         battery.getBatteryLevel()
       );
     }
+    // ---- Screen 3: ADS-B aircraft ----
+    else if (this->stat_display_mode == AIRCRAFT) {
+      this->drawAircraft(currentTime, false);
+    }
 
     // ---- Button handling — debounced at 300ms ----
     bool mode_change_ok = (currentTime - this->last_mode_change_ms >= 300);
@@ -956,6 +1021,8 @@ void UI::main(uint32_t currentTime) {
           wifi_ops.getCurrentNetCount(), wifi_ops.getCurrent2g4Count(),
           wifi_ops.getCurrent5gCount(), wifi_ops.getCurrentBLECount(),
           gps.getNumSats(), battery.getBatteryLevel(), true);
+      else if (next == AIRCRAFT)
+        this->drawAircraft(currentTime, true);
     }
 
     if (d_btn.justPressed() && mode_change_ok) {
@@ -977,6 +1044,8 @@ void UI::main(uint32_t currentTime) {
           wifi_ops.getCurrentNetCount(), wifi_ops.getCurrent2g4Count(),
           wifi_ops.getCurrent5gCount(), wifi_ops.getCurrentBLECount(),
           gps.getNumSats(), battery.getBatteryLevel(), true);
+      else if (next == AIRCRAFT)
+        this->drawAircraft(currentTime, true);
     }
 
     if (c_btn.justPressed())
