@@ -21,9 +21,10 @@ static String scPath(const String& filePath, const String& service);
 RTC_NOINIT_ATTR bool rtc_dock_done;
 
 // Set by a user trigger (dock menu / serial 'u'), consumed once on the next
-// boot's clean-heap window. RTC_DATA_ATTR survives ESP.restart but not a
-// power cycle, so a stray request can't loop past a power-off.
-RTC_DATA_ATTR bool rtc_ota_check = false;
+// boot's clean-heap window. RTC_NOINIT_ATTR (not RTC_DATA_ATTR) so the flag
+// survives ESP.restart — an initialized RTC_DATA var gets re-zeroed on the
+// reboot on this C5. Cleared on a cold boot in otaCheckPending().
+RTC_NOINIT_ATTR bool rtc_ota_check;
 
 static const uint8_t BROADCAST_MAC[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 static const char MAGIC[4] = {'E','N','O','W'};
@@ -3136,7 +3137,14 @@ void WiFiOps::drawUploadCounts(int ok, int failed, int pending) {
 // Online OTA — pull the latest dark3d release from GitHub
 // ============================================================
 void WiFiOps::requestOnlineUpdate() { rtc_ota_check = true; }
-bool WiFiOps::otaCheckPending()      { return rtc_ota_check; }
+bool WiFiOps::otaCheckPending() {
+  esp_reset_reason_t rr = esp_reset_reason();
+  if (rr == ESP_RST_POWERON || rr == ESP_RST_BROWNOUT || rr == ESP_RST_UNKNOWN) {
+    rtc_ota_check = false;                     // cold boot: clear NOINIT garbage/stale flag
+    return false;
+  }
+  return rtc_ota_check;                         // SW reset (the trigger's reboot): honor it
+}
 
 // Boot-time entry: runs in the early clean-heap window (mbedTLS wants a large
 // contiguous heap, same reason the dock upload runs here). Connects WiFi, runs
@@ -3145,6 +3153,7 @@ void WiFiOps::runOnlineUpdateCheck() {
   rtc_ota_check = false;                       // consume the request (no loop)
   Logger::log(STD_MSG, "[OTA] online update check requested");
 
+  this->initWiFi();                            // bring the radio up first (as tryBootDockUpload does)
   bool connected = this->connectForUpload();   // present dock net, else Network
   if (!connected) {
     Logger::log(WARN_MSG, "[OTA] no WiFi for update check");
