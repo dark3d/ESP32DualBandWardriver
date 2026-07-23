@@ -3222,8 +3222,16 @@ bool WiFiOps::checkForOnlineUpdate() {
   Logger::log(STD_MSG, "[OTA] latest " + tag + " / current " + String(FIRMWARE_VERSION));
   if (tag.length() == 0) return false;
   if (tag == FIRMWARE_VERSION) {
-    display.drawCenteredText("Up to date", true);
-    delay(1500);
+    display.clearScreen();
+    display.tft->setTextSize(2);                       // bigger, readable
+    display.tft->setTextColor(ST77XX_GREEN, ST77XX_BLACK);
+    display.tft->setCursor((TFT_WIDTH - 10 * 12) / 2, 18);
+    display.tft->print("Up to date");
+    display.tft->setTextSize(1);
+    display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    display.tft->setCursor((TFT_WIDTH - (int)tag.length() * 6) / 2, 46);
+    display.tft->print(tag);                           // version on its own row
+    delay(2200);
     return false;
   }
 
