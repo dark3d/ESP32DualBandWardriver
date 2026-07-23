@@ -5,6 +5,7 @@
 #include "esp_task_wdt.h"
 #include "esp_system.h"
 #include "esp_ota_ops.h"
+#include <Update.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 
@@ -3237,9 +3238,9 @@ bool WiFiOps::checkForOnlineUpdate() {
   }
 
   display.clearScreen();
-  display.tft->setCursor(0, 32);
+  display.tft->setCursor(0, 8);
   display.drawCenteredText("Updating to:", false);
-  display.tft->setCursor(0, 44);
+  display.tft->setCursor(0, 20);
   display.drawCenteredText(tag, false);
   Logger::log(STD_MSG, "[OTA] downloading " + binUrl);
 
@@ -3267,6 +3268,22 @@ bool WiFiOps::checkForOnlineUpdate() {
     return false;
   }
   Logger::log(STD_MSG, "[OTA] size " + String(len) + "B heap " + String(ESP.getFreeHeap()));
+
+  // Live progress bar so the flash never looks stuck (writeStream is ~30-60s)
+  Update.onProgress([](size_t done, size_t total) {
+    static int last = -1;
+    int pct = total ? (int)(done * 100 / total) : 0;
+    if (pct == last) return;
+    last = pct;
+    int bx = 12, by = 52, bw = TFT_WIDTH - 24, bh = 14;
+    display.tft->drawRect(bx, by, bw, bh, ST77XX_WHITE);
+    display.tft->fillRect(bx + 2, by + 2, (bw - 4) * pct / 100, bh - 4, ST77XX_CYAN);
+    char b[6]; snprintf(b, sizeof(b), "%d%%", pct);
+    display.tft->setTextSize(1);
+    display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+    display.tft->setCursor(TFT_WIDTH / 2 - (int)strlen(b) * 3, 38);
+    display.tft->print(b);
+  });
 
   WiFiClient* stream = dl.getStreamPtr();
   bool ok = sd_obj.performUpdate(*stream, (size_t)len);
