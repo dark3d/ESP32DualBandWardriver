@@ -3187,6 +3187,7 @@ bool WiFiOps::checkForOnlineUpdate() {
   }
   https.addHeader("User-Agent", "dark3d-wardriver");
   https.addHeader("Accept", "application/vnd.github+json");
+  https.addHeader("Accept-Encoding", "identity");   // no gzip -> parseable body
 
   int code = https.GET();
   if (code != HTTP_CODE_OK) {
@@ -3197,6 +3198,11 @@ bool WiFiOps::checkForOnlineUpdate() {
     return false;
   }
 
+  // getString() dechunks the (chunked) GitHub response; passing the raw
+  // getStream() to the parser fails on the chunk-size framing (IncompleteInput).
+  String payload = https.getString();
+  https.end();
+
   // Keep only tag_name + each asset's name / download URL out of the big payload
   DynamicJsonDocument filter(256);
   filter["tag_name"] = true;
@@ -3205,8 +3211,7 @@ bool WiFiOps::checkForOnlineUpdate() {
 
   DynamicJsonDocument doc(3072);
   DeserializationError err =
-    deserializeJson(doc, https.getStream(), DeserializationOption::Filter(filter));
-  https.end();
+    deserializeJson(doc, payload, DeserializationOption::Filter(filter));
   if (err) {
     Logger::log(WARN_MSG, "[OTA] json parse: " + String(err.c_str()));
     return false;
