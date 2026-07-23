@@ -25,6 +25,9 @@
 
 //// Firmware info stuff
 #define FIRMWARE_VERSION "v2.3.0+dark3d.8"
+
+// Online OTA: latest-release lookup on the dark3d fork
+#define OTA_RELEASES_API "https://api.github.com/repos/dark3d/ESP32DualBandWardriver/releases/latest"
 #define DEVICE_NAME      "JCMK C5 Wardriver"
 
 //// Role stuff

@@ -46,6 +46,13 @@ void UI::begin() {
     wifi_ops.dockScreenRefresh();
     display.clearScreen();
   });
+  this->addNodes(&dock_menu, "Check Updates", ST77XX_WHITE, NULL, 0, [this]() {
+    display.clearScreen();
+    display.drawCenteredText("Rebooting to update", true);
+    wifi_ops.requestOnlineUpdate();
+    delay(800);
+    Settings::safeRestart();
+  });
 
   // File menu is built lazily on first open (deferred off the boot path).
   sd_file_menu.name = "Logs";

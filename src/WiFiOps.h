@@ -354,6 +354,12 @@ class WiFiOps
                     uint8_t upload_type = WIGLE_UPLOAD);       // upload to both services (sidecar-aware)
     void reserveTlsGuard();                    // reserve a contiguous TLS arena (call at boot, heap pristine)
     bool tryBootDockUpload();                  // minimal-heap boot upload (before heavy init), reboots to normal
+
+    // Online OTA: check GitHub for a newer release and self-flash it
+    void requestOnlineUpdate();                // set the pending flag (call, then reboot)
+    bool otaCheckPending();                    // true if an online update check was requested
+    void runOnlineUpdateCheck();               // boot-time: connect WiFi + run the check (clean heap)
+    bool checkForOnlineUpdate();               // fetch latest release, flash if newer; reboots on success
     void uploadAllPending();                   // scan SD and upload all files missing sidecars
     void uploadAllPendingV2();                 // strangler: drive UploadManager (per-service backoff)
     void drawUploadCounts(int ok, int failed, int pending);

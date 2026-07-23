@@ -4,6 +4,7 @@
 #include <algorithm>
 #include "esp_task_wdt.h"
 #include "esp_system.h"
+#include "esp_ota_ops.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 
@@ -18,6 +19,11 @@ static String scPath(const String& filePath, const String& service);
 // Set once the arrival's dock upload has drained; blocks re-docking until the
 // trigger SSID has been absent long enough to count as a departure.
 RTC_NOINIT_ATTR bool rtc_dock_done;
+
+// Set by a user trigger (dock menu / serial 'u'), consumed once on the next
+// boot's clean-heap window. RTC_DATA_ATTR survives ESP.restart but not a
+// power cycle, so a stray request can't loop past a power-off.
+RTC_DATA_ATTR bool rtc_ota_check = false;
 
 static const uint8_t BROADCAST_MAC[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 static const char MAGIC[4] = {'E','N','O','W'};
@@ -3124,6 +3130,144 @@ void WiFiOps::drawUploadCounts(int ok, int failed, int pending) {
   display.tft->print("Fail " + String(failed) + " ");
   display.tft->setTextColor(ST77XX_WHITE, ST77XX_BLACK);
   display.tft->print("Left " + String(pending));
+}
+
+// ============================================================
+// Online OTA — pull the latest dark3d release from GitHub
+// ============================================================
+void WiFiOps::requestOnlineUpdate() { rtc_ota_check = true; }
+bool WiFiOps::otaCheckPending()      { return rtc_ota_check; }
+
+// Boot-time entry: runs in the early clean-heap window (mbedTLS wants a large
+// contiguous heap, same reason the dock upload runs here). Connects WiFi, runs
+// the check, tears WiFi back down if it didn't flash+reboot.
+void WiFiOps::runOnlineUpdateCheck() {
+  rtc_ota_check = false;                       // consume the request (no loop)
+  Logger::log(STD_MSG, "[OTA] online update check requested");
+
+  bool connected = this->connectForUpload();   // present dock net, else Network
+  if (!connected) {
+    Logger::log(WARN_MSG, "[OTA] no WiFi for update check");
+    display.clearScreen();
+    display.drawCenteredText("No WiFi for update", true);
+    delay(1500);
+    return;
+  }
+
+  this->checkForOnlineUpdate();                 // reboots on a successful flash
+  this->deinitWiFi();
+}
+
+// Fetch releases/latest, compare tag to FIRMWARE_VERSION, and if different
+// stream the .bin asset straight into the OTA partition. Returns true only when
+// it flashed (in which case it has already rebooted).
+bool WiFiOps::checkForOnlineUpdate() {
+  display.clearScreen();
+  display.drawCenteredText("Checking for updates", true);
+
+  WiFiClientSecure secure;
+  secure.setInsecure();
+  secure.setTimeout(10000);
+
+  HTTPClient https;
+  https.setReuse(false);
+  https.setTimeout(10000);
+  if (!https.begin(secure, OTA_RELEASES_API)) {
+    Logger::log(WARN_MSG, "[OTA] api begin failed");
+    return false;
+  }
+  https.addHeader("User-Agent", "dark3d-wardriver");
+  https.addHeader("Accept", "application/vnd.github+json");
+
+  int code = https.GET();
+  if (code != HTTP_CODE_OK) {
+    Logger::log(WARN_MSG, "[OTA] api GET " + String(code));
+    https.end();
+    display.drawCenteredText("Update check failed", true);
+    delay(1500);
+    return false;
+  }
+
+  // Keep only tag_name + each asset's name / download URL out of the big payload
+  DynamicJsonDocument filter(256);
+  filter["tag_name"] = true;
+  filter["assets"][0]["name"] = true;
+  filter["assets"][0]["browser_download_url"] = true;
+
+  DynamicJsonDocument doc(3072);
+  DeserializationError err =
+    deserializeJson(doc, https.getStream(), DeserializationOption::Filter(filter));
+  https.end();
+  if (err) {
+    Logger::log(WARN_MSG, "[OTA] json parse: " + String(err.c_str()));
+    return false;
+  }
+
+  String tag = doc["tag_name"] | "";
+  Logger::log(STD_MSG, "[OTA] latest " + tag + " / current " + String(FIRMWARE_VERSION));
+  if (tag.length() == 0) return false;
+  if (tag == FIRMWARE_VERSION) {
+    display.drawCenteredText("Up to date", true);
+    delay(1500);
+    return false;
+  }
+
+  String binUrl;
+  for (JsonObject a : doc["assets"].as<JsonArray>()) {
+    String n = a["name"] | "";
+    if (n.endsWith(".bin")) { binUrl = a["browser_download_url"] | ""; break; }
+  }
+  if (binUrl.length() == 0) {
+    Logger::log(WARN_MSG, "[OTA] no .bin asset in latest release");
+    return false;
+  }
+
+  display.clearScreen();
+  display.drawCenteredText("Updating to " + tag, true);
+  Logger::log(STD_MSG, "[OTA] downloading " + binUrl);
+
+  WiFiClientSecure dlsec;
+  dlsec.setInsecure();
+  dlsec.setTimeout(15000);
+
+  HTTPClient dl;
+  dl.setReuse(false);
+  dl.setTimeout(15000);
+  dl.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);   // github -> CDN 302
+  if (!dl.begin(dlsec, binUrl)) return false;
+  dl.addHeader("User-Agent", "dark3d-wardriver");
+
+  int dcode = dl.GET();
+  if (dcode != HTTP_CODE_OK) {
+    Logger::log(WARN_MSG, "[OTA] download GET " + String(dcode));
+    dl.end();
+    return false;
+  }
+  int len = dl.getSize();
+  if (len <= 0) {
+    Logger::log(WARN_MSG, "[OTA] bad content-length " + String(len));
+    dl.end();
+    return false;
+  }
+  Logger::log(STD_MSG, "[OTA] size " + String(len) + "B heap " + String(ESP.getFreeHeap()));
+
+  WiFiClient* stream = dl.getStreamPtr();
+  bool ok = sd_obj.performUpdate(*stream, (size_t)len);
+  dl.end();
+
+  if (ok) {
+    const esp_partition_t* next = esp_ota_get_next_update_partition(NULL);
+    if (next) esp_ota_set_boot_partition(next);
+    display.clearScreen();
+    display.drawCenteredText("Updated. Rebooting", true);
+    delay(1000);
+    Settings::safeRestart();
+    return true;
+  }
+
+  display.drawCenteredText("Update failed", true);
+  delay(1500);
+  return false;
 }
 
 bool WiFiOps::tryBootDockUpload() {

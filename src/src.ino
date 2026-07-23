@@ -10,6 +10,7 @@
 #include "utils.h"
 #include "ui.h"
 #include "logger.h"
+#include "esp_ota_ops.h"
 
 SET_LOOP_TASK_STACK_SIZE(12 * 1024);
 
@@ -105,6 +106,11 @@ void setup() {
   if (d_btn.justPressed()) mode_override = CORE_MODE;
   else if (u_btn.justPressed()) mode_override = SOLO_MODE;
 
+  // Online update check (dock menu / serial 'u' set the flag, then rebooted).
+  // Runs in the same clean-heap window as the dock upload; reboots on a flash.
+  if (!sel_held && wifi_ops.otaCheckPending())
+    wifi_ops.runOnlineUpdateCheck();
+
   // Minimal-heap dock upload BEFORE the memory-heavy subsystems (GPS/UI/ADS-B/BLE)
   // init, so mbedTLS gets a clean contiguous heap. Reboots into normal mode when
   // done. Skipped when SELECT is held ("resume wardriving").
@@ -134,6 +140,10 @@ void setup() {
   Logger::log(GUD_MSG, "Initialization complete!");
   Logger::log(STD_MSG, "[HEAP] boot free=" + String(ESP.getFreeHeap()) +
               " maxAlloc=" + String(ESP.getMaxAllocHeap()));
+
+  // Reaching here = a good boot: confirm the running app so the bootloader
+  // won't roll it back to the other OTA slot (both SD and online OTA "stick").
+  esp_ota_mark_app_valid_cancel_rollback();
 }
 
 void loop() {
@@ -142,6 +152,7 @@ void loop() {
   while (Serial.available()) {
     char c = Serial.read();
     if (c == 'b') wifi_ops.toggleSimNoFix();
+    if (c == 'u') { wifi_ops.requestOnlineUpdate(); Settings::safeRestart(); }
   }
 
   // Take current time of this loop for functions
