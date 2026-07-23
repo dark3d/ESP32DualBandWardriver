@@ -35,6 +35,10 @@ class Display {
   private:
     SPIClass* _spi;
 
+    void kiloIntro();
+    void introCopper();
+    void introMatrix();
+    void drawBtcMark(GFXcanvas16* cv, int x, int y, int s, uint16_t col);
     void drawMonochromeImage160x80(const uint8_t* imageData, int width, int height);
 
 };
