@@ -3237,7 +3237,10 @@ bool WiFiOps::checkForOnlineUpdate() {
   }
 
   display.clearScreen();
-  display.drawCenteredText("Updating to " + tag, true);
+  display.tft->setCursor(0, 32);
+  display.drawCenteredText("Updating to:", false);
+  display.tft->setCursor(0, 44);
+  display.drawCenteredText(tag, false);
   Logger::log(STD_MSG, "[OTA] downloading " + binUrl);
 
   WiFiClientSecure dlsec;
