@@ -24,7 +24,7 @@
 #define JCMK_HOST_BOARD
 
 //// Firmware info stuff
-#define FIRMWARE_VERSION "v2.3.0+dark3d.9"
+#define FIRMWARE_VERSION "v2.3.0+dark3d.10"
 
 // Online OTA: latest-release lookup on the dark3d fork
 #define OTA_RELEASES_API "https://api.github.com/repos/dark3d/ESP32DualBandWardriver/releases/latest"
