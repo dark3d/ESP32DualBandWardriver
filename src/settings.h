@@ -35,6 +35,7 @@
 #define TRIGGER_PASS_NAME  "t_pass"    // legacy single dock password (migrated to dp_0)
 #define DOCK_SSID_PREFIX   "ds_"       // ds_0..ds_4  docking network SSIDs (String)
 #define DOCK_PASS_PREFIX   "dp_"       // dp_0..dp_4  docking network passwords (String)
+#define DOCK_MIGRATED_NAME "dsm"       // legacy trigger migration ran once (bool); stops re-migration
 #define ADMIN_PASS_NAME    "a_pass"    // Basic Auth password for web UI (String)
 #define DEBUG_LOG_NAME     "dbg_en"    // SD debug log enabled (bool)
 #define GPS_BUFFER_NAME    "gps_buf"   // buffer detections while GPS unfixed, backfill on reacquire (bool)

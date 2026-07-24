@@ -4253,13 +4253,15 @@ void WiFiOps::loadDockCache() {
   }
 }
 void WiFiOps::migrateDockSSIDs() {
+  if (settings.getSettingType(DOCK_MIGRATED_NAME) != "") return;   // one-shot: never re-migrate
   String legacy = settings.loadSetting<String>(TRIGGER_SSID_NAME);
-  if (legacy.isEmpty()) return;                              // nothing to migrate
-  if (!this->dock_ssid_cache[0].isEmpty()) return;           // slot 0 already set — don't clobber
-  String legacyPass = settings.loadSetting<String>(TRIGGER_PASS_NAME);
-  settings.saveSetting<bool>(String(DOCK_SSID_PREFIX) + "0", legacy);
-  settings.saveSetting<bool>(String(DOCK_PASS_PREFIX) + "0", legacyPass);
-  Logger::log(GUD_MSG, "[DOCK] Migrated legacy trigger '" + legacy + "' into docking slot 1");
+  if (!legacy.isEmpty() && this->dock_ssid_cache[0].isEmpty()) {
+    String legacyPass = settings.loadSetting<String>(TRIGGER_PASS_NAME);
+    settings.saveSetting<bool>(String(DOCK_SSID_PREFIX) + "0", legacy);
+    settings.saveSetting<bool>(String(DOCK_PASS_PREFIX) + "0", legacyPass);
+    Logger::log(GUD_MSG, "[DOCK] Migrated legacy trigger '" + legacy + "' into docking slot 0");
+  }
+  settings.saveSetting<bool>(DOCK_MIGRATED_NAME, true);
 }
 void WiFiOps::initDockConfig() {
   this->loadDockCache();      // ensures ds_/dp_ keys exist (as String) and caches them
