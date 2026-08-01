@@ -1,0 +1,47 @@
+# Notices
+
+Firmware here is distributed in binary form.
+
+## `wardriver-c5-*` — ESP32-C5 Wardriver
+
+Built on ESP32DualBandWardriver by Just Call Me Koko, used under the MIT license, and links
+the components in the table below.
+
+```
+MIT License
+
+Copyright (c) 2025 Just Call Me Koko
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### Components linked into this image
+
+| Component | License |
+|---|---|
+| arduino-esp32 core | LGPL-2.1-or-later |
+| ESP-IDF | Apache-2.0 |
+| EspSoftwareSerial | LGPL-2.1 |
+| MicroNMEA | LGPL-2.1 |
+| NimBLE-Arduino | Apache-2.0 |
+| Adafruit GFX, Adafruit MAX1704X | BSD-3-Clause |
+| Adafruit BusIO, ArduinoJson, LinkedList | MIT |
+
+Full license texts are available from each upstream project.
+
