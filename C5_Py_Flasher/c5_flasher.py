@@ -72,7 +72,39 @@ def find_file(name_options, bins_dir):
         if files:
             return files[0]
     return None
-    
+
+# Read the otadata partition's offset out of the partition table we are about to
+# flash, rather than trusting a constant to stay in step with it.
+#
+# This exists because the constant did not stay in step. ota_data was written to
+# 0xd000, while every partition table this flasher has shipped puts otadata at
+# 0xe000 and nvs at 0x9000..0xe000. 0xd000 is 4KB inside nvs, which is where the
+# device keeps its settings: WiFi credentials, docking networks, the lot. Writing
+# there would have corrupted them and still not placed otadata, so the board would
+# come up with damaged settings and no valid boot selector.
+#
+# It never fired only because it is guarded by "if ota_data:" and no
+# ota_data_initial.bin has ever been in bins/. Dropping one in would have armed it.
+#
+# Entries are 32 bytes: magic 0xAA50, type, subtype, offset, size, then the name.
+# Type 1 subtype 0 is otadata.
+def otadata_offset(partitions_path, default=0xe000):
+    try:
+        with open(partitions_path, 'rb') as f:
+            table = f.read()
+    except OSError:
+        return default
+    for i in range(0, len(table) - 31, 32):
+        entry = table[i:i + 32]
+        if entry[:2] != b'\xaa\x50':
+            continue
+        p_type, p_subtype = entry[2], entry[3]
+        offset = int.from_bytes(entry[4:8], 'little')
+        if p_type == 1 and p_subtype == 0:
+            return offset
+    return default
+
+
 def run_esptool(args, success_msg=None, fail_prefix="esptool failed"):
     """
     Runs esptool.main(args) but prevents esptool from terminating this script via sys.exit().
@@ -218,7 +250,9 @@ def main():
         '0x8000', partitions,
     ]
     if ota_data:
-        write_args += ['0xd000', ota_data]
+        ota_off = otadata_offset(partitions)
+        print(Fore.CYAN + f"OTA data offset: {ota_off:#x} (read from the partition table)" + Style.RESET_ALL)
+        write_args += [f'{ota_off:#x}', ota_data]
     write_args += ['0x10000', app_bin]
 
     if not run_esptool(write_args, success_msg=Fore.GREEN + "Flashing complete!" + Style.RESET_ALL,
